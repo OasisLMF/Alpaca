@@ -10,10 +10,10 @@ on:
     branches:
       - main
   workflow_dispatch:
-  inputs:
-    alpaca_branch:
-      description: 'Optional branch to test'
-      required: false
+    inputs:
+      alpaca_branch:
+        description: 'Optional branch to test'
+        required: false
 
 
 jobs:
