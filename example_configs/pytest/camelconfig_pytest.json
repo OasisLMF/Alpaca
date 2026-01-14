@@ -1,0 +1,10 @@
+{
+    "AWS_REGION": "eu-west-1",
+    "AMI_ID": "ami-09079da11cd2861fa",
+    "INSTANCE_TYPE": "t3.medium",
+    "SECURITY_GROUP_ID": "sg-00481e92cab2bbd2a",
+    "KEY_NAME": "keyname",
+    "KEY_PATH": "/path/to/key.pem",
+    "SUBNET_ID": "subnet-b5eaa8c3",
+    "REPO_LOCATION": "https://github.com/OasisLMF/OasisLMF"
+}

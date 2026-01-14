@@ -1,0 +1,44 @@
+# Stolen from Oasis Platform (Thanks Sam)
+
+name: Python Tests - Alpaca
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  inputs:
+    alpaca_branch:
+      description: 'Optional branch to test'
+      required: false
+
+
+jobs:
+  unittest:
+    env:
+      JUNIT_REPORT: pytest_report.xml
+      ALPACA_BRANCH: ${{ github.ref }}
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Branch selection (remote trigger)
+      if: inputs.alpaca_branch != ''
+      run: echo "ALPACA_BRANCH=${{ inputs.alpaca_branch }}" >> $GITHUB_ENV
+
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        repository: OasisLMF/Alpaca
+        ref: ${{ env.ALPACA_BRANCH }}
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    - run: pip install -r requirements.txt
+
+    - name: Run Pytest
+      run: pytest .

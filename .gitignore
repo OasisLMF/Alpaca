@@ -1,0 +1,44 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache
+
+# Distribution / packaging
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# virtualenv
+.venv
+venv/
+ENV/
+
+# pycharm
+.idea/
+data/
+
+# vs code
+.vscode/
+
+# mac os
+.DS_Store/
+.DS_Store
+
+# oasis
+*runs/
+*footprint_tcp_server.log
