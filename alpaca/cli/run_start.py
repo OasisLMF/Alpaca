@@ -14,7 +14,7 @@ def run_model(args):
 
 def run_pytest(args):
     if len(args) == 0 or args[0] in HELP_ARGS:
-         print("Usage: 'alpaca pytest <config.json>'")
+        print("Usage: 'alpaca pytest <config.json>'")
     else:
         pytest_main(args[0])
 
