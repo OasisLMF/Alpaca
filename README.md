@@ -38,7 +38,7 @@ Soon to be implemented
 Alpaca is currently designed to be ran on instances using Ubuntu. This can be changed in
 the future, but only Ubuntu instances will currently work due to the path /home/ubuntu
 being used as a default.
-
+```
               04515                              # # #
               2 52 3     x          x               #   #
              1473173    x x        x x               #   #
@@ -62,3 +62,4 @@ being used as a default.
                 2  33772    4 713  4         #                      #
                 2 27371     4 373 17        #                        #
                 2 4 272     435 2 2       #                            #
+```
