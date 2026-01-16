@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class RemoteController():
-    def __init__(self, config_file, required_config):
+    def __init__(self, config_file, required_config=[]):
         self.config = self._create_config(config_file, required_config)  # To ensure no required config is missing
         self.ec2 = None
         self.ssh = None

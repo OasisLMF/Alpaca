@@ -1,0 +1,15 @@
+{
+    "AWS_REGION": "World",
+    "OASISLMF_VERSION": "3.14159",
+    "Al": "paca",
+    "croissant": "bagel",
+    "AMI_ID": "id",
+    "INSTANCE_TYPE": "type",
+    "KEY_NAME": "mr key",
+    "SUBNET_ID": "mr subnet",
+    "SECURITY_GROUP_ID": "group id",
+    "DISK_GB": 21,
+    "IAM_INSTANCE_PROFILE": "profile",
+    "EC2_NAME": "Johnathon",
+    "KEY_PATH": "/path/to/key"
+}

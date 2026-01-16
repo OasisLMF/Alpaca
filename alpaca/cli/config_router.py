@@ -13,6 +13,9 @@ ROUTING = {
 
 
 def create_config_router(args=None):
+    if len(args) > 0:
+        if args[0] in ROUTING:
+            return ROUTING[args[0]]()
     print_alpaca()
     print("Welcome to Alpaca! This script will create alpaca config you can use to run your instance.\n")
     direction = input("Is this for API, Model or Pytest?\n").lower()

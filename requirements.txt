@@ -3,3 +3,4 @@ termcolor
 paramiko
 setuptools
 pytest
+pytest-mock

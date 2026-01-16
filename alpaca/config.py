@@ -9,7 +9,7 @@ def create_config(required_config, optional_config):
     for name, description, default in required_config:
         config[name] = input(f"Choose value of {name}: {description}. Defaults to {default}.\n") or default
 
-    for name, description in optional_config:
+    for name, description, _ in optional_config:
         value = input(f"Choose value of {name}: {description}. Optional.\n")
         if value:
             config[name] = value
