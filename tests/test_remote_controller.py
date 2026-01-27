@@ -192,11 +192,27 @@ def test_download_results_local(downloader):
 
 def test__create_config_returns_config():
     controller = RemoteController(CONFIG_PATH)
-    config = controller._create_config(CONFIG_PATH, {})
+    config = controller._create_config(CONFIG_PATH, [], [])
     assert config == CONFIG
 
 
-def test__create_instance_iam_instance():
+@mock.patch("alpaca.remote_controller.os")
+def test__create_config_uses_environment(mock_os):
+    mock_os.environ = {
+        "ALPACA_1": "2",
+        "ALPACA_3": "4",
+        "ALPACA_SUBNET_ID": "should not override config"
+    }
+    controller = RemoteController(CONFIG_PATH)
+    config = controller._create_config(CONFIG_PATH, [("1", "", ""), ("SUBNET_ID", "", "")], [("3", "", "")])
+    assert config["1"] == "2"
+    assert config["3"] == "4"
+    assert config["SUBNET_ID"] != "should not override config"
+
+
+@mock.patch("alpaca.remote_controller.time")
+def test__create_instance_iam_instance(mock_time):
+    mock_time.time.return_value = 17
     controller = RemoteController(CONFIG_PATH)
     controller.ec2 = mock.Mock()
     controller.ec2.run_instances.return_value = {"Instances": [{"InstanceId": 32}]}
@@ -219,6 +235,7 @@ def test__create_instance_iam_instance():
                 "ResourceType": "instance",
                 "Tags": [
                     {"Key": "Name", "Value": CONFIG["EC2_NAME"]},
+                    {"Key": "ALPACA_END_TIME", "Value": str(17 + 2 * 60 * 60)}
                 ]
             }
         ],
@@ -238,7 +255,9 @@ def test__create_instance_iam_instance():
     controller.ec2.run_instances.assert_called_once_with(**expected_config)
 
 
-def test__create_instance_no_iam_instance():
+@mock.patch("alpaca.remote_controller.time")
+def test__create_instance_no_iam_instance(mock_time):
+    mock_time.time.return_value = 42
     controller = RemoteController(CONFIG_PATH)
     new_config = CONFIG.copy()
     default_config = ["IAM_INSTANCE_PROFILE", "INSTANCE_TYPE", "DISK_GB", "EC2_NAME"]
@@ -265,6 +284,7 @@ def test__create_instance_no_iam_instance():
                 "ResourceType": "instance",
                 "Tags": [
                     {"Key": "Name", "Value": "Alpaca"},
+                    {"Key": "ALPACA_END_TIME", "Value": str(42 + 2 * 60 * 60)}
                 ]
             }
         ],

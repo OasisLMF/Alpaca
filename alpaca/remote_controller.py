@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 class RemoteController():
-    def __init__(self, config_file, required_config=[]):
-        self.config = self._create_config(config_file, required_config)  # To ensure no required config is missing
+    def __init__(self, config_file, required_config=[], optional_config=[]):
+        self.config = self._create_config(config_file, required_config, optional_config)  # To ensure no required config is missing
         self.ec2 = None
         self.ssh = None
         self.instance_id = None
@@ -96,12 +96,20 @@ class RemoteController():
         _download_results(sftp, Path(remote_path), Path(local_path))
         logger.info("Download complete")
 
-    def _create_config(self, config_file, required_config):
+    def _create_config(self, config_file, required_config, optional_config):
         with open(config_file, 'r') as f:
             config = json.load(f)
         for (key, _, _) in required_config:
             if key not in config:
-                raise OasisAlpacaConfigError(f"Missing key {key} from alpaca config")
+                if f"ALPACA_{key}" in os.environ:
+                    logger.info(f"Config {key} taken from environment")
+                    config[key] = os.environ[f"ALPACA_{key}"]
+                else:
+                    raise OasisAlpacaConfigError(f"Missing required key {key} from alpaca config")
+        for (key, _, _) in optional_config:
+            if key not in config and f"ALPACA_{key}" in os.environ:
+                logger.info(f"Config {key} taken from environment")
+                config[key] = os.environ[f"ALPACA_{key}"]
         return config
 
     def _create_instance(self):
@@ -125,6 +133,7 @@ class RemoteController():
                     "ResourceType": "instance",
                     "Tags": [
                         {"Key": "Name", "Value": self.config.get("EC2_NAME", "Alpaca")},
+                        {"Key": "ALPACA_END_TIME", "Value": str(time.time() + self.config.get("MAX_LIFETIME_HOURS", 2) * 60 * 60)}
                     ]
                 }
             ],

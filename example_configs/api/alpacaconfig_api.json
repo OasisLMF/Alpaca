@@ -1,0 +1,12 @@
+{
+    "AWS_REGION": "eu-west-1",
+    "AMI_ID": "ami-09079da11cd2861fa",
+    "INSTANCE_TYPE": "t3.large",
+    "SECURITY_GROUP_ID": "sg-00481e92cab2bbd2a",
+    "KEY_NAME": "keyname",
+    "KEY_PATH": "/path/to/key.pem",
+    "SUBNET_ID": "subnet-b5eaa8c3",
+    "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+    "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
+    "PATH_TO_DOCKER_COMPOSE": "./docker-compose.yml"
+}

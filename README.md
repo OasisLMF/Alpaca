@@ -19,6 +19,13 @@ Examples of Alpaca config can be found in the `example_configs` folder, and the 
 creation tool will assist you in creating your own by providing help text and defaults
 for all given options.
 
+To override config that is missing from your config file, you can set the environment
+variable
+`ALPACA_{config}`
+which will replace the config if it is missing from your config file.
+Please note that `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are boto3 environment
+variables and not Alpaca ones and will not have the `ALPACA_` prefix.
+
 ## Running a model
 When you have created your config file, to use it to perform an Oasis model run, simply
 use the command
@@ -32,7 +39,11 @@ Simply use the command
 to do the same thing with any tests you have for a model.
 
 ## Running on the platform
-Soon to be implemented
+For the platform run, your repo must either have a docker compose file or a deployment
+bash script that will start your platform. When you have created your config, use the
+command
+`alpaca api <path-to-config>`
+to create a platform in EC2 and do an API run.
 
 ## Notes
 Alpaca is currently designed to be ran on instances using Ubuntu. This can be changed in

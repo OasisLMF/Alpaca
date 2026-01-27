@@ -22,9 +22,6 @@ def setup_python_commands(oasislmf_version=None):
         "sudo ./aws/install",
         f"sudo pip install oasislmf{oasislmf_version} -qq",
         f"sudo pip install 'oasislmf[extra]{oasislmf_version}' -qq",
-        "aws --version",
-        "python3 --version",
-        "oasislmf version"
     ]
     return commands
 

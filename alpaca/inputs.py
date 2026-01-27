@@ -16,3 +16,6 @@ LOG_LEVEL = ("LOG_LEVEL", "Verbosity of logging", "INFO")
 EC2_NAME = ("EC2_NAME", "Name of EC2 Instance", "Alpaca")
 RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket) or local (./path/to/local)", "./runs")
 PYTEST_ARGS = ("PYTEST_ARGS", "Arguments to pass to PyTest (already uses -vv flag)", "")
+PATH_TO_DOCKER_COMPOSE = ("PATH_TO_DOCKER_COMPOSE", "Path from base of REPO_LOCATION to docker-compose file (or bash script)",
+                          "./docker-compose.yml")
+MAX_LIFETIME_HOURS = ("MAX_LIFETIME_HOURS", "Max lifetime of EC2 instance in hours", "2")
