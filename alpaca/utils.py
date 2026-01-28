@@ -11,10 +11,12 @@ logger = logging.getLogger(__name__)
 
 
 def get_timestamp():
+    """ Timestamp form YYYYMMDDHHMM: e.g. Christmas 2025 12:30 => 202512251230 """
     return time.strftime("%Y%m%d%H%M")
 
 
 def remove_start(line):
+    """ Remove INFO or other log start from a command to avoid having it doubled """
     info_split = re.compile(r'(INFO|WARNING|DEBUG|ERROR)\s*-\s*(.*)')
     match = info_split.search(line)
     if match:
@@ -23,6 +25,7 @@ def remove_start(line):
 
 
 def _download_results(sftp, results_dir_path_remote, results_dir_path_local):
+    """ Download from results_dir_path_remote to results_dir_path_local while skipping input folders """
     results_dir_path_local.mkdir(parents=True, exist_ok=True)
     skip_names = {"fifo", "static", "work"}
     input_files = {'keys.csv', 'keys-errors.csv'}

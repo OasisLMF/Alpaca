@@ -5,6 +5,7 @@ SAVE_PATH = "./myalpacaconfig.json"
 
 
 def create_config(required_config, optional_config):
+    """ Prompts user to fill in data for required and optional config to create a json config """
     config = {}
     for name, description, default in required_config:
         config[name] = input(f"Choose value of {name}: {description}. Defaults to {default}.\n") or default

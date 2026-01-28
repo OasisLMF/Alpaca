@@ -27,6 +27,7 @@ def setup_python_commands(oasislmf_version=None):
 
 
 def download_from_s3_commands(s3_link):
+    """ Commands for downloading from s3 bucket """
     commands = [
         f"aws s3 cp --recursive {s3_link} /home/ubuntu"
     ]
@@ -34,6 +35,7 @@ def download_from_s3_commands(s3_link):
 
 
 def download_from_github_commands(github_link):
+    """ Commands to download from github """
     folder_name = re.split(r"[/.]", urlparse(github_link).path)[2]
     commands = [
         f"git clone {github_link}",
@@ -43,6 +45,7 @@ def download_from_github_commands(github_link):
 
 
 def upload_to_s3_commands(remote_link, s3_link):
+    """ Commands to upload results to s3 """
     bucket = s3_link.replace("s3://", "").split("/", 1)[0]
 
     commands = [
@@ -53,6 +56,7 @@ def upload_to_s3_commands(remote_link, s3_link):
 
 
 def download_only_important_command(loc_from, loc_to):
+    """ Command to exclude certain files such as input files from runs folder """
     command = (
         "aws s3 cp --recursive "
         f"{loc_from} {loc_to} "

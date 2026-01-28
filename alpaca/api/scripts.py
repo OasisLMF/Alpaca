@@ -1,4 +1,5 @@
 def api_run_commands(path_to_oasislmf_json):
+    """ Commands to run an api run on http://localhost:8000 and move result tar file to runs folder """
     commands = [
         f"oasislmf api run --server-url http://localhost:8000/ -C {path_to_oasislmf_json}",
         "mkdir -p ./runs",
@@ -8,6 +9,7 @@ def api_run_commands(path_to_oasislmf_json):
 
 
 def deploy_oasis_server_commands(path_to_docker_compose):
+    """ Commands to compose docker-compose file or run a bash script """
     if path_to_docker_compose.endswith(".sh"):  # Custom bash scripts may be used instead
         commands = [
             f"chmod +x {path_to_docker_compose}",
@@ -22,6 +24,7 @@ def deploy_oasis_server_commands(path_to_docker_compose):
 
 
 def wait_for_oasis_server_commands():
+    """ Commands to wait with exponential tail for between 5 and 10 mins for server healthcheck """
     commands = [
         'delay=5; max=300; elapsed=0; until curl -sf http://localhost:8000/healthcheck; do '
         '[ "$elapsed" -ge "$max" ] && echo "Timed out waiting for service" && exit 1; sleep '
@@ -31,6 +34,7 @@ def wait_for_oasis_server_commands():
 
 
 def docker_install_commands():
+    """ Commands to download, enable and start Docker """
     commands = [
         "sudo apt-get update -y",
         "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg",

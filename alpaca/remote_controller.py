@@ -37,9 +37,9 @@ class RemoteController():
         logger.debug(exc_type, exc_value, traceback)
 
     def setup_instance(self):
-        """Makes EC2, SSH's in and sets up Python/OasisLMF"""
+        """ Makes EC2, SSH's in and sets up Python/OasisLMF """
         try:
-            self.ec2 = boto3.client("ec2", region_name=self.config["AWS_REGION"])
+            self.ec2 = boto3.client("ec2", region_name=self.config.get("AWS_REGION", 'eu-west-1'))
             self.instance_id = self._create_instance()
             self.public_ip = self._wait_for_instance()
             self.ssh = self._wait_for_ssh()
@@ -49,6 +49,7 @@ class RemoteController():
             raise OasisAlpacaError(f"Error during instance setup: {e}")
 
     def shutdown(self):
+        """ Closes ssh, terminates ec2 instance """
         if self.ssh:
             self.ssh.close()
         if not self.instance_id or not self.ec2:
@@ -62,7 +63,7 @@ class RemoteController():
         logger.info("Instance terminated.")
 
     def run_commands(self, commands, log_condition=None):
-        """Run shell commands over SSH using Paramiko."""
+        """ Run shell commands over SSH using Paramiko. """
         log_condition = log_condition or (lambda cmd: False)
         for cmd in commands:
             logger.info(f"Executing: {cmd}")
@@ -75,7 +76,7 @@ class RemoteController():
                 self._ssh_logs_unimportant(stdout, stderr)
 
     def upload_model(self, repo_location):
-        """Upload model to ec2 instance"""
+        """ Upload model to ec2 instance """
         if 'github.com' in repo_location:
             self.run_commands(download_from_github_commands(repo_location))
         elif repo_location.startswith("s3"):
@@ -83,7 +84,7 @@ class RemoteController():
         self.run_commands(model_requirements_commands())
 
     def download_results(self, remote_path=None, local_path=None):
-        """Download all data from remote_path to local_path"""
+        """ Download all data from remote_path to local_path """
         logger.info("Starting download of results folder")
         if remote_path is None:
             remote_path = "/home/ubuntu/runs"
@@ -97,6 +98,7 @@ class RemoteController():
         logger.info("Download complete")
 
     def _create_config(self, config_file, required_config, optional_config):
+        """ Turns config json into a config object and taking missing config from environment """
         with open(config_file, 'r') as f:
             config = json.load(f)
         for (key, _, _) in required_config:
@@ -113,7 +115,7 @@ class RemoteController():
         return config
 
     def _create_instance(self):
-        """Creating EC2 instance using config"""
+        """ Creating EC2 instance using config """
         ec2_kwargs = {
             "ImageId": self.config["AMI_ID"],
             "InstanceType": self.config.get("INSTANCE_TYPE", "t3.medium"),
@@ -158,7 +160,7 @@ class RemoteController():
         return instance_id
 
     def _wait_for_instance(self):
-        """Wait for EC2 to be running"""
+        """ Wait for EC2 to be running """
         logger.info("Waiting for instance to enter 'running' state")
         waiter = self.ec2.get_waiter("instance_running")
         waiter.wait(InstanceIds=[self.instance_id])
@@ -170,7 +172,7 @@ class RemoteController():
         return public_ip
 
     def _wait_for_ssh(self):
-        """Wait for the SSH connection"""
+        """ Wait for the SSH connection """
         logger.info("Waiting for SSH")
         key = paramiko.RSAKey.from_private_key_file(self.config['KEY_PATH'])
 
@@ -184,7 +186,7 @@ class RemoteController():
                 time.sleep(3)
 
     def _ssh_logs_important(self, stdout, stderr):
-        """Logging handler for important logs"""
+        """ Logging handler for important logs """
         stdout.channel.set_combine_stderr(True)
         decoder = codecs.getincrementaldecoder("utf-8")()
         while not stdout.channel.exit_status_ready() or stdout.channel.recv_ready():
@@ -199,7 +201,7 @@ class RemoteController():
                 time.sleep(1)
 
     def _ssh_logs_unimportant(self, stdout, stderr):
-        """Logging handler for unimportant logs"""
+        """ Logging handler for unimportant logs """
         out = stdout.read().decode("utf-8").strip()
         err = stderr.read().decode("utf-8").strip()
         if out:
