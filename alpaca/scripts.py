@@ -49,7 +49,7 @@ def upload_to_s3_commands(remote_link, s3_link):
     bucket = s3_link.replace("s3://", "").split("/", 1)[0]
 
     commands = [
-        f"aws s3 ls s3://{bucket} >/dev/null 2>&1 || aws s3 mb s3://{bucket}",
+        f"aws s3 ls s3://{bucket} >/dev/null 2>&1 || aws s3 mb s3://{bucket}",  # noqa: E231
         download_only_important_command(remote_link, s3_link)
     ]
     return commands
