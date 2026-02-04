@@ -12,10 +12,6 @@ import os
 import codecs
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +22,13 @@ class RemoteController():
         self.ssh = None
         self.instance_id = None
         self.public_ip = None
-        logger.setLevel(self.config.get("LOG_LEVEL", "INFO"))
+        # Set up log levels for all modules
+        log_level_str = self.config.get("LOG_LEVEL", "INFO")
+        log_level = getattr(logging, log_level_str, logging.INFO)
+        logging.getLogger("alpaca").setLevel(log_level)
+        logging.getLogger("botocore").setLevel(log_level)
+        logging.getLogger("paramiko").setLevel(log_level)
+        logging.getLogger("urllib3").setLevel(log_level)
 
     def __enter__(self):
         self.setup_instance()
@@ -44,6 +46,9 @@ class RemoteController():
             self.public_ip = self._wait_for_instance()
             self.ssh = self._wait_for_ssh()
             self.run_commands(setup_python_commands(self.config.get('OASISLMF_VERSION', None)))
+        except KeyboardInterrupt:
+            # Ctrl c here will skip shutdown as it is differently cased to exception
+            self.shutdown()
         except Exception as e:
             self.shutdown()
             raise OasisAlpacaError(f"Error during instance setup: {e}")
@@ -176,13 +181,19 @@ class RemoteController():
         logger.info("Waiting for SSH")
         key = paramiko.RSAKey.from_private_key_file(self.config['KEY_PATH'])
 
-        while True:
+        max_retries = int(self.config.get("SSH_MAX_RETRIES", 60))
+        retry_count = 0
+
+        while retry_count < max_retries:
             try:
                 ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 ssh.connect(self.public_ip, username="ubuntu", pkey=key, timeout=5)
                 return ssh
-            except Exception:
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise OasisAlpacaError(f"Failed to establish SSH connection after {max_retries} attempts: {e}")
                 time.sleep(3)
 
     def _ssh_logs_important(self, stdout, stderr):

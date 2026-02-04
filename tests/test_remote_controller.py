@@ -323,3 +323,103 @@ def test_wait_for_ssh(paramiko):
     assert controller._wait_for_ssh() == ssh
     paramiko.RSAKey.from_private_key_file.assert_called_once_with(CONFIG["KEY_PATH"])
     ssh.connect.assert_called_once()
+
+
+@mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.paramiko")
+def test_wait_for_ssh_retries_on_failure(paramiko, mock_sleep):
+    """Test that _wait_for_ssh will retry when SSH connection fails"""
+    ssh = mock.Mock()
+    paramiko.SSHClient.return_value = ssh
+    # First two attempts fail, third succeeds
+    ssh.connect.side_effect = [Exception("Connection refused"), Exception("Timeout"), None]
+
+    controller = RemoteController(CONFIG_PATH)
+    result = controller._wait_for_ssh()
+
+    assert result == ssh
+    assert ssh.connect.call_count == 3
+    assert mock_sleep.call_count == 2
+
+
+@mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.paramiko")
+def test_wait_for_ssh_fails_after_max_retries(paramiko, mock_sleep):
+    """Test that _wait_for_ssh raises error after exceeding max retries"""
+    ssh = mock.Mock()
+    paramiko.SSHClient.return_value = ssh
+    ssh.connect.side_effect = Exception("Connection refused")
+
+    controller = RemoteController(CONFIG_PATH)
+    controller.config["SSH_MAX_RETRIES"] = 3
+
+    with pytest.raises(OasisAlpacaError):
+        controller._wait_for_ssh()
+
+    assert ssh.connect.call_count == 3
+
+
+@mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.paramiko")
+def test_wait_for_ssh_sleeps_between_retries(paramiko, mock_sleep):
+    """Test that _wait_for_ssh sleeps between retry attempts"""
+    ssh = mock.Mock()
+    paramiko.SSHClient.return_value = ssh
+    ssh.connect.side_effect = [Exception("Failed"), None]
+
+    controller = RemoteController(CONFIG_PATH)
+    controller._wait_for_ssh()
+
+    mock_sleep.assert_called_once_with(3)
+
+
+def test_run_commands_with_empty_list():
+    """Test that run_commands handles empty command list"""
+    controller = RemoteController(CONFIG_PATH)
+    controller.ssh = mock.Mock()
+
+    controller.run_commands([])
+
+    controller.ssh.exec_command.assert_not_called()
+
+
+def test_context_manager_calls_shutdown_on_exception():
+    """Test that context manager calls shutdown even when exception occurs"""
+    controller = RemoteController(CONFIG_PATH)
+    controller.setup_instance = mock.Mock()
+    controller.shutdown = mock.Mock()
+
+    try:
+        with controller:
+            raise ValueError("Test exception")
+    except ValueError:
+        pass
+
+    controller.shutdown.assert_called_once()
+
+
+def test_shutdown_with_no_ssh_connection():
+    """Test that shutdown handles case when SSH connection doesn't exist"""
+    controller = RemoteController(CONFIG_PATH)
+    controller.instance_id = "test-id"
+    controller.ec2 = mock.Mock()
+    controller.ssh = None
+    waiter = mock.Mock()
+    controller.ec2.get_waiter.return_value = waiter
+
+    controller.shutdown()
+
+    controller.ec2.terminate_instances.assert_called_once()
+
+
+def test_upload_model_runs_model_requirements():
+    """Test that upload_model will install model requirements after downloading"""
+    repo = "https://github.com/test/repo"
+    controller = RemoteController(CONFIG_PATH)
+    controller.run_commands = mock.Mock()
+
+    controller.upload_model(repo)
+
+    commands_called = [call[0][0] for call in controller.run_commands.call_args_list]
+    # Check that model_requirements_commands is called
+    assert any("requirements" in str(cmd) for cmd in commands_called)

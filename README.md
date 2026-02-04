@@ -1,6 +1,6 @@
 # Alpaca
 Alpaca is a command line tool to test out oasis models on EC2 servers.
-For a list of all the commands that are available for Alpaca, simply typing the commmand
+For a list of all the commands that are available for Alpaca, simply typing the command
 `alpaca`
 will list all currently available options.
 

@@ -22,5 +22,5 @@ def create_config(required_config, optional_config):
             file.write(config)
     except Exception:
         print(f"Unable to save to path {path}. Saving to {SAVE_PATH}\n")
-        with (SAVE_PATH, "w") as file:
+        with open(SAVE_PATH, "w") as file:
             file.write(config)

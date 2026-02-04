@@ -19,3 +19,4 @@ PYTEST_ARGS = ("PYTEST_ARGS", "Arguments to pass to PyTest (already uses -vv fla
 PATH_TO_DOCKER_COMPOSE = ("PATH_TO_DOCKER_COMPOSE", "Path from base of REPO_LOCATION to docker-compose file (or bash script)",
                           "./docker-compose.yml")
 MAX_LIFETIME_HOURS = ("MAX_LIFETIME_HOURS", "Max lifetime of EC2 instance in hours", "2")
+SSH_MAX_RETRIES = ("SSH_MAX_RETRIES", "Maximum number of SSH connection attempts before timeout", "60")
