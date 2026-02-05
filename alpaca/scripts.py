@@ -3,12 +3,14 @@ import re
 
 
 def setup_python_commands(oasislmf_version=None):
-    """Bash commands used to set up pip and oasislmf
+    """Generate commands to install Python, pip, AWS CLI, and OasisLMF.
 
     Args:
-        oasislmf_version (string, None): specific version of oasislmf to install
+        oasislmf_version: Specific version of OasisLMF to install (e.g., '2.0.0').
+            If None, installs the latest version.
 
-    Returns: List[string]
+    Returns:
+        list[str]: Shell commands to execute in sequence.
     """
     if oasislmf_version:
         oasislmf_version = f"=={oasislmf_version}"
@@ -27,7 +29,15 @@ def setup_python_commands(oasislmf_version=None):
 
 
 def download_from_s3_commands(s3_link):
-    """ Commands for downloading from s3 bucket """
+    """Generate commands to download a model from an S3 bucket.
+    Requires the EC2 instance to have an IAM role with S3 read permissions.
+
+    Args:
+        s3_link: S3 URI of the model (e.g., 's3://bucket-name/path/to/model').
+
+    Returns:
+        list[str]: Shell commands to execute.
+    """
     commands = [
         f"aws s3 cp --recursive {s3_link} /home/ubuntu"
     ]
@@ -35,7 +45,17 @@ def download_from_s3_commands(s3_link):
 
 
 def download_from_github_commands(github_link):
-    """ Commands to download from github """
+    """Generate commands to clone a model repository from GitHub.
+
+    Clones the repository and moves its contents to the current directory.
+    Only works with public repositories (no authentication).
+
+    Args:
+        github_link: GitHub repository URL (e.g., 'https://github.com/org/repo').
+
+    Returns:
+        list[str]: Shell commands to execute.
+    """
     folder_name = re.split(r"[/.]", urlparse(github_link).path)[2]
     commands = [
         f"git clone {github_link}",
@@ -45,7 +65,15 @@ def download_from_github_commands(github_link):
 
 
 def upload_to_s3_commands(remote_link, s3_link):
-    """ Commands to upload results to s3 """
+    """Generate commands to upload model results to an S3 bucket, creating it if it doesn't exist.
+    Requires IAM_INSTANCE_PROFILE config with a suitable role.
+    Args:
+        remote_link: Path on the EC2 instance containing results (e.g., '/home/ubuntu/runs').
+        s3_link: Destination S3 URI (e.g., 's3://bucket-name/results').
+
+    Returns:
+        list[str]: Shell commands to execute.
+    """
     bucket = s3_link.replace("s3://", "").split("/", 1)[0]
 
     commands = [
@@ -56,7 +84,25 @@ def upload_to_s3_commands(remote_link, s3_link):
 
 
 def download_only_important_command(loc_from, loc_to):
-    """ Command to exclude certain files such as input files from runs folder """
+    """Generate an S3 copy command to attain all run files except for:
+
+    Excluded directories:
+        - */fifo/*
+        - */static/*
+        - */work/*
+        - */input/*
+
+    Included despite exclusions:
+        - */input/keys.csv
+        - */input/keys-errors.csv
+
+    Args:
+        loc_from: Source path (local or S3 URI).
+        loc_to: Destination path (local or S3 URI).
+
+    Returns:
+        str: A single AWS CLI command string.
+    """
     command = (
         "aws s3 cp --recursive "
         f"{loc_from} {loc_to} "
@@ -71,8 +117,11 @@ def download_only_important_command(loc_from, loc_to):
 
 
 def model_requirements_commands():
-    """
-    Return shell commands that install model requirements if present.
+    """Generate commands to install model-specific Python dependencies.
+
+    Returns:
+        list[str]: Shell commands to execute. The command is a conditional
+            that checks for requirements files and installs if present.
     """
     return [
         (

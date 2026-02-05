@@ -2,7 +2,16 @@ from alpaca.utils import get_timestamp
 
 
 def run_pytest_commands(pytest_args=""):
-    """Commands to install pytest, hypothesis, mock and responses, storing logs in pytest_logs folder with unique name for time ran"""
+    """Generate commands to install pytest dependencies and run tests.
+    Saves results to timestamped ./pytest_logs/pytest-YYYYMMDDHHMM.txt
+
+    Args:
+        pytest_args: Additional arguments to pass to pytest (e.g., '-k test_name',
+            '--maxfail=3'). The -vv flag is always included.
+
+    Returns:
+        list[str]: Shell commands to execute in sequence.
+    """
     timestamp = get_timestamp()
     commands = [
         "sudo pip install pytest -qq",

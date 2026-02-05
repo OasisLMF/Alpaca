@@ -1,3 +1,4 @@
+"""Interactive configuration file generator for Alpaca."""
 import json
 
 
@@ -5,7 +6,20 @@ SAVE_PATH = "./myalpacaconfig.json"
 
 
 def create_config(required_config, optional_config):
-    """ Prompts user to fill in data for required and optional config to create a json config """
+    """Interactively create an Alpaca configuration file.
+
+    Prompts the user for each configuration value, using defaults for required
+    fields if no input is provided. Optional fields are only included if a
+    value is entered.
+
+    If no save file is given at the end, file is saved to ./myalpacaconfig.json.
+
+    Args:
+        required_config: List of (name, description, default) tuples for required keys.
+            Users will be prompted with the description and default value.
+        optional_config: List of (name, description, default) tuples for optional keys.
+            These are only added to the config if the user provides a value.
+    """
     config = {}
     for name, description, default in required_config:
         config[name] = input(f"Choose value of {name}: {description}. Defaults to {default}.\n") or default

@@ -13,7 +13,15 @@ CONFIGS = {
 
 
 def create_config_router(args=None):
-    """ Directs create-config to get the required and optional commands for its option """
+    """Route to the appropriate config creator based on run type.
+
+    Args:
+        args: Command-line arguments. If args[0] is 'api', 'model', or 'pytest',
+            uses that config type directly. Otherwise prompts the user.
+
+    Raises:
+        OasisAlpacaConfigError: If user enters an invalid config type when prompted.
+    """
     if len(args) > 0:
         if args[0].lower() in CONFIGS:
             return create_config(*CONFIGS[args[0].lower()])
