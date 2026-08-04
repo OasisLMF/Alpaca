@@ -221,7 +221,6 @@ def test__create_instance_iam_instance(mock_time):
         "InstanceType": CONFIG["INSTANCE_TYPE"],
         "MinCount": 1,
         "MaxCount": 1,
-        "KeyName": CONFIG["KEY_NAME"],
         "NetworkInterfaces": [
             {
                 "DeviceIndex": 0,
@@ -270,7 +269,6 @@ def test__create_instance_no_iam_instance(mock_time):
         "InstanceType": "t3.medium",
         "MinCount": 1,
         "MaxCount": 1,
-        "KeyName": CONFIG["KEY_NAME"],
         "NetworkInterfaces": [
             {
                 "DeviceIndex": 0,
@@ -309,25 +307,46 @@ def test__wait_for_instance():
     controller.instance_id = "instance id"
     waiter = mock.Mock()
     controller.ec2.get_waiter.return_value = waiter
-    controller.ec2.describe_instances.return_value = {"Reservations": [{"Instances": [{"PublicIpAddress": "ip address"}]}]}
+    controller.ec2.describe_instances.return_value = {
+        "Reservations": [{"Instances": [{"PublicIpAddress": "ip address", "Placement": {"AvailabilityZone": "eu-west-1a"}}]}]
+    }
     assert controller._wait_for_instance() == "ip address"
     controller.ec2.describe_instances.assert_called_once_with(InstanceIds=[controller.instance_id])
     waiter.wait.assert_called_once_with(InstanceIds=[controller.instance_id])
+    assert controller.availability_zone == "eu-west-1a"
 
 
+@mock.patch("alpaca.remote_controller.boto3.client")
 @mock.patch("alpaca.remote_controller.paramiko")
-def test_wait_for_ssh(paramiko):
+def test_wait_for_ssh(paramiko, mock_boto_client):
     ssh = mock.Mock()
     paramiko.SSHClient.return_value = ssh
+    instance_connect = mock.Mock()
+    mock_boto_client.return_value = instance_connect
+
     controller = RemoteController(CONFIG_PATH)
+    controller.instance_id = "i-fakeinstance"
+    controller.availability_zone = "eu-west-1a"
+
     assert controller._wait_for_ssh() == ssh
-    paramiko.RSAKey.from_private_key_file.assert_called_once_with(CONFIG["KEY_PATH"])
-    ssh.connect.assert_called_once()
+
+    mock_boto_client.assert_called_once_with("ec2-instance-connect", region_name=CONFIG["AWS_REGION"])
+    instance_connect.send_ssh_public_key.assert_called_once_with(
+        InstanceId="i-fakeinstance",
+        InstanceOSUser="ubuntu",
+        SSHPublicKey=mock.ANY,
+        AvailabilityZone="eu-west-1a",
+    )
+    paramiko.ProxyCommand.assert_called_once()
+    ssh.connect.assert_called_once_with(
+        "i-fakeinstance", username="ubuntu", pkey=mock.ANY, sock=paramiko.ProxyCommand.return_value, timeout=5
+    )
 
 
 @mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.boto3.client")
 @mock.patch("alpaca.remote_controller.paramiko")
-def test_wait_for_ssh_retries_on_failure(paramiko, mock_sleep):
+def test_wait_for_ssh_retries_on_failure(paramiko, mock_boto_client, mock_sleep):
     """Test that _wait_for_ssh will retry when SSH connection fails"""
     ssh = mock.Mock()
     paramiko.SSHClient.return_value = ssh
@@ -340,11 +359,15 @@ def test_wait_for_ssh_retries_on_failure(paramiko, mock_sleep):
     assert result == ssh
     assert ssh.connect.call_count == 3
     assert mock_sleep.call_count == 2
+    # A fresh authorization is pushed before every attempt, since the ephemeral key only lives 60s
+    instance_connect = mock_boto_client.return_value
+    assert instance_connect.send_ssh_public_key.call_count == 3
 
 
 @mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.boto3.client")
 @mock.patch("alpaca.remote_controller.paramiko")
-def test_wait_for_ssh_fails_after_max_retries(paramiko, mock_sleep):
+def test_wait_for_ssh_fails_after_max_retries(paramiko, mock_boto_client, mock_sleep):
     """Test that _wait_for_ssh raises error after exceeding max retries"""
     ssh = mock.Mock()
     paramiko.SSHClient.return_value = ssh
@@ -360,8 +383,9 @@ def test_wait_for_ssh_fails_after_max_retries(paramiko, mock_sleep):
 
 
 @mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.boto3.client")
 @mock.patch("alpaca.remote_controller.paramiko")
-def test_wait_for_ssh_sleeps_between_retries(paramiko, mock_sleep):
+def test_wait_for_ssh_sleeps_between_retries(paramiko, mock_boto_client, mock_sleep):
     """Test that _wait_for_ssh sleeps between retry attempts"""
     ssh = mock.Mock()
     paramiko.SSHClient.return_value = ssh
@@ -371,6 +395,43 @@ def test_wait_for_ssh_sleeps_between_retries(paramiko, mock_sleep):
     controller._wait_for_ssh()
 
     mock_sleep.assert_called_once_with(3)
+
+
+@mock.patch("alpaca.remote_controller.boto3.client")
+@mock.patch("alpaca.remote_controller.paramiko")
+def test_wait_for_ssh_reraises_after_connect_failure(paramiko, mock_boto_client):
+    """Test that a failure to push the ephemeral key is retried just like a connect failure"""
+    instance_connect = mock.Mock()
+    mock_boto_client.return_value = instance_connect
+    instance_connect.send_ssh_public_key.side_effect = [Exception("not registered yet"), None]
+    ssh = mock.Mock()
+    paramiko.SSHClient.return_value = ssh
+
+    controller = RemoteController(CONFIG_PATH)
+    with mock.patch("alpaca.remote_controller.time.sleep"):
+        assert controller._wait_for_ssh() == ssh
+
+    assert instance_connect.send_ssh_public_key.call_count == 2
+    ssh.connect.assert_called_once()
+
+
+def test_ssm_proxy_command_without_profile():
+    controller = RemoteController(CONFIG_PATH)
+    controller.instance_id = "i-fakeinstance"
+    controller.config.pop("AWS_PROFILE", None)
+    command = controller._ssm_proxy_command()
+    assert command == (
+        "aws ssm start-session --target i-fakeinstance "
+        f"--document-name AWS-StartSSHSession --parameters 'portNumber=22' --region {CONFIG['AWS_REGION']}"
+    )
+
+
+def test_ssm_proxy_command_with_profile():
+    controller = RemoteController(CONFIG_PATH)
+    controller.instance_id = "i-fakeinstance"
+    controller.config["AWS_PROFILE"] = "oasis"
+    command = controller._ssm_proxy_command()
+    assert command.endswith(" --profile oasis")
 
 
 def test_run_commands_with_empty_list():

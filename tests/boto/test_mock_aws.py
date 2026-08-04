@@ -5,24 +5,12 @@ from pathlib import Path
 from unittest import mock
 from moto import mock_aws
 import boto3
-import paramiko
 
 from alpaca.remote_controller import RemoteController
 
 
 @pytest.fixture
-def ssh_key_file():
-    """Create a temporary SSH private key for testing"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as f:
-        # Generate a real RSA key for testing
-        key = paramiko.RSAKey.generate(2048)
-        key.write_private_key_file(f.name)
-        yield f.name
-    Path(f.name).unlink()
-
-
-@pytest.fixture
-def config_file(ssh_key_file):
+def config_file():
     """Create a temporary config file"""
     config = {
         "AWS_REGION": "us-east-1",
@@ -30,8 +18,6 @@ def config_file(ssh_key_file):
         "INSTANCE_TYPE": "t3.small",
         "SECURITY_GROUP_ID": "sg-12345678",
         "SUBNET_ID": "subnet-12345678",
-        "KEY_NAME": "test-key",
-        "KEY_PATH": ssh_key_file,
         "DISK_GB": 50,
         "EC2_NAME": "test-instance",
         "MAX_LIFETIME_HOURS": 1,
@@ -62,9 +48,6 @@ def test_remote_controller_creates_ec2_instance(config_file):
         Description='Test security group',
         VpcId=vpc['Vpc']['VpcId']
     )
-
-    # Create SSH key pair
-    ec2.create_key_pair(KeyName='test-key')
 
     # Update config with real moto IDs
     with open(config_file, 'r') as f:
@@ -150,8 +133,6 @@ def test_remote_controller_with_iam_role(config_file):
         Description='Test',
         VpcId=vpc['Vpc']['VpcId']
     )
-    ec2.create_key_pair(KeyName='test-key')
-
     # Update config
     with open(config_file, 'r') as f:
         config = json.load(f)
@@ -190,8 +171,6 @@ def test_remote_controller_context_manager(config_file):
         Description='Test',
         VpcId=vpc['Vpc']['VpcId']
     )
-    ec2.create_key_pair(KeyName='test-key')
-
     # Update config
     with open(config_file, 'r') as f:
         config = json.load(f)
@@ -221,7 +200,7 @@ def test_remote_controller_context_manager(config_file):
 
 
 @mock_aws
-def test_remote_controller_config_from_environment(ssh_key_file):
+def test_remote_controller_config_from_environment():
     """Test that configuration can be overridden by environment variables"""
     import os
 
@@ -229,8 +208,6 @@ def test_remote_controller_config_from_environment(ssh_key_file):
     config = {
         "AWS_REGION": "us-east-1",
         "AMI_ID": "ami-12345678",
-        "KEY_NAME": "test-key",
-        "KEY_PATH": ssh_key_file,
     }
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -246,8 +223,6 @@ def test_remote_controller_config_from_environment(ssh_key_file):
         Description='Test',
         VpcId=vpc['Vpc']['VpcId']
     )
-    ec2.create_key_pair(KeyName='test-key')
-
     # Override via environment variables
     os.environ['ALPACA_SUBNET_ID'] = subnet['Subnet']['SubnetId']
     os.environ['ALPACA_SECURITY_GROUP_ID'] = sg['GroupId']
@@ -281,8 +256,6 @@ def test_remote_controller_shutdown_without_instance():
     config = {
         "AWS_REGION": "us-east-1",
         "AMI_ID": "ami-12345678",
-        "KEY_NAME": "test-key",
-        "KEY_PATH": "/tmp/fake.pem",
     }
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:

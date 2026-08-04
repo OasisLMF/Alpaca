@@ -3,8 +3,6 @@
     "AMI_ID": "ami-09079da11cd2861fa",
     "INSTANCE_TYPE": "m4.4xlarge",
     "SECURITY_GROUP_ID": "sg-00481e92cab2bbd2a",
-    "KEY_NAME": "keyname",
-    "KEY_PATH": "/path/to/key.pem",
     "SUBNET_ID": "subnet-b5eaa8c3",
     "REPO_LOCATION": "s3://repo-location",
     "PATH_TO_OASISLMF_JSON": "./oasislmf-test-sr.json",

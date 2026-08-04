@@ -27,9 +27,12 @@ class RemoteController:
     Attributes:
         config (dict): Configuration dictionary loaded from JSON file and environment.
         ec2 (boto3.client): AWS EC2 client for instance management.
-        ssh (paramiko.SSHClient): SSH client for remote command execution.
+        ssh (paramiko.SSHClient): SSH client for remote command execution, tunnelled over an
+            SSM session using an ephemeral keypair (no static key ever touches disk).
         instance_id (str): The AWS instance ID of the created EC2 instance.
         public_ip (str): Public IP address of the running instance.
+        availability_zone (str): Availability zone of the running instance, required to
+            authorize the ephemeral SSH key via EC2 Instance Connect.
 
     Raises:
         OasisAlpacaConfigError: If required configuration keys are missing.
@@ -56,6 +59,7 @@ class RemoteController:
         self.ssh = None
         self.instance_id = None
         self.public_ip = None
+        self.availability_zone = None
         # Set up log levels for all modules
         log_level_str = self.config.get("LOG_LEVEL", "INFO")
         log_level = getattr(logging, log_level_str, logging.INFO)
@@ -229,7 +233,6 @@ class RemoteController:
             "InstanceType": self.config.get("INSTANCE_TYPE", "t3.medium"),
             "MinCount": 1,
             "MaxCount": 1,
-            "KeyName": self.config["KEY_NAME"],
             "NetworkInterfaces": [
                 {
                     "DeviceIndex": 0,
@@ -268,7 +271,7 @@ class RemoteController:
         return instance_id
 
     def _wait_for_instance(self):
-        """Wait for the EC2 instance to reach 'running' state and get its IP.
+        """Wait for the EC2 instance to reach 'running' state and get its IP and availability zone.
 
         Returns:
             str: The public IP address of the running instance.
@@ -278,13 +281,21 @@ class RemoteController:
         waiter.wait(InstanceIds=[self.instance_id])
 
         desc = self.ec2.describe_instances(InstanceIds=[self.instance_id])
-        public_ip = desc["Reservations"][0]["Instances"][0]["PublicIpAddress"]
+        instance = desc["Reservations"][0]["Instances"][0]
+        public_ip = instance["PublicIpAddress"]
+        self.availability_zone = instance["Placement"]["AvailabilityZone"]
 
         logger.info(f"Instance public IP: {public_ip}")
         return public_ip
 
     def _wait_for_ssh(self):
-        """Waits to establish SSH connection to the instance with retries, then returns connected client.
+        """Establish an SSH connection to the instance tunnelled entirely over SSM, with retries.
+
+        No static key ever touches disk. A fresh keypair is generated in memory for this run,
+        and its public half is (re-)authorized on the instance for 60 seconds via EC2 Instance
+        Connect before each connection attempt. The transport never opens a direct TCP connection
+        to the instance; it is proxied through 'aws ssm start-session --document-name
+        AWS-StartSSHSession', so no inbound port 22 rule is required on the security group.
 
         Returns:
             paramiko.SSHClient: Connected SSH client
@@ -293,23 +304,56 @@ class RemoteController:
             OasisAlpacaError: If connection fails after SSH_MAX_RETRIES attempts
                 (default: 60 retries = 3 minutes).
         """
-        logger.info("Waiting for SSH")
-        key = paramiko.RSAKey.from_private_key_file(self.config['KEY_PATH'])
+        logger.info("Waiting for SSH over SSM")
+        instance_connect = boto3.client("ec2-instance-connect", region_name=self.config.get("AWS_REGION", 'eu-west-1'))
+        key = paramiko.RSAKey.generate(2048)
+        public_key = f"{key.get_name()} {key.get_base64()}"
 
         max_retries = int(self.config.get("SSH_MAX_RETRIES", 60))
         retry_count = 0
 
         while retry_count < max_retries:
+            proxy = None
+            ssh = None
             try:
+                instance_connect.send_ssh_public_key(
+                    InstanceId=self.instance_id,
+                    InstanceOSUser="ubuntu",
+                    SSHPublicKey=public_key,
+                    AvailabilityZone=self.availability_zone,
+                )
+                proxy = paramiko.ProxyCommand(self._ssm_proxy_command())
                 ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.public_ip, username="ubuntu", pkey=key, timeout=5)
+                ssh.connect(self.instance_id, username="ubuntu", pkey=key, sock=proxy, timeout=5)
                 return ssh
             except Exception as e:
+                # Tear down a failed attempt's SSM session/subprocess before retrying, otherwise
+                # every retry leaks a background Transport thread and an "aws ssm start-session" process.
+                if ssh is not None:
+                    ssh.close()
+                elif proxy is not None:
+                    proxy.close()
                 retry_count += 1
                 if retry_count >= max_retries:
-                    raise OasisAlpacaError(f"Failed to establish SSH connection after {max_retries} attempts: {e}")
+                    raise OasisAlpacaError(f"Failed to establish SSH-over-SSM connection after {max_retries} attempts: {e}")
                 time.sleep(3)
+
+    def _ssm_proxy_command(self):
+        """Build the ProxyCommand used to tunnel the SSH connection through an SSM session.
+
+        Returns:
+            str: Shell command that starts an SSM session forwarding to the instance's port 22.
+        """
+        region = self.config.get("AWS_REGION", 'eu-west-1')
+        command = (
+            f"aws ssm start-session --target {self.instance_id} "
+            f"--document-name AWS-StartSSHSession --parameters 'portNumber=22' --region {region}"
+        )
+        profile = self.config.get("AWS_PROFILE")
+        if profile:
+            command += f" --profile {profile}"
+        return command
 
     def _ssh_logs_important(self, stdout, stderr):
         """Stream command output in real-time for important commands.
