@@ -60,7 +60,8 @@ def test_remote_controller_creates_ec2_instance(config_file):
     # Create controller (but mock SSH since we can't actually connect)
     controller = RemoteController(config_file, required_config=[], optional_config=[])
 
-    # Mock the SSH-related methods since moto doesn't run actual instances
+    # Mock the SSH-related methods since moto doesn't run actual instances or SSM agents
+    controller._wait_for_ssm_registration = mock.Mock()
     controller._wait_for_ssh = mock.Mock(return_value=mock.Mock())
     controller.run_commands = mock.Mock()
 
@@ -144,6 +145,7 @@ def test_remote_controller_with_iam_role(config_file):
 
     # Test
     controller = RemoteController(config_file)
+    controller._wait_for_ssm_registration = mock.Mock()
     controller._wait_for_ssh = mock.Mock(return_value=mock.Mock())
     controller.run_commands = mock.Mock()
 
@@ -182,16 +184,17 @@ def test_remote_controller_context_manager(config_file):
     instance_id = None
 
     # Test context manager
-    with mock.patch.object(RemoteController, '_wait_for_ssh', return_value=mock.Mock()):
-        with mock.patch.object(RemoteController, 'run_commands'):
-            with RemoteController(config_file) as controller:
-                instance_id = controller.instance_id
-                assert instance_id is not None
+    with mock.patch.object(RemoteController, '_wait_for_ssm_registration'):
+        with mock.patch.object(RemoteController, '_wait_for_ssh', return_value=mock.Mock()):
+            with mock.patch.object(RemoteController, 'run_commands'):
+                with RemoteController(config_file) as controller:
+                    instance_id = controller.instance_id
+                    assert instance_id is not None
 
-                # Verify instance is running
-                instances = ec2.describe_instances(InstanceIds=[instance_id])
-                state = instances['Reservations'][0]['Instances'][0]['State']['Name']
-                assert state in ['pending', 'running']
+                    # Verify instance is running
+                    instances = ec2.describe_instances(InstanceIds=[instance_id])
+                    state = instances['Reservations'][0]['Instances'][0]['State']['Name']
+                    assert state in ['pending', 'running']
 
     # After context manager exits, instance should be terminated
     instances = ec2.describe_instances(InstanceIds=[instance_id])

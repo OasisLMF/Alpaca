@@ -51,6 +51,7 @@ def test_setup_instance_success(mock_boto_client):
 
     controller._create_instance = mock.Mock(return_value="instancey mcinstanceface")
     controller._wait_for_instance = mock.Mock(return_value="2.3.5.7")
+    controller._wait_for_ssm_registration = mock.Mock()
     controller._wait_for_ssh = mock.Mock(return_value=mock.Mock())
     controller.run_commands = mock.Mock()
     controller.shutdown = mock.Mock()
@@ -66,6 +67,7 @@ def test_setup_instance_success(mock_boto_client):
 
     controller._create_instance.assert_called_once()
     controller._wait_for_instance.assert_called_once()
+    controller._wait_for_ssm_registration.assert_called_once()
     controller._wait_for_ssh.assert_called_once()
 
     controller.run_commands.assert_called_once_with(
@@ -314,6 +316,62 @@ def test__wait_for_instance():
     controller.ec2.describe_instances.assert_called_once_with(InstanceIds=[controller.instance_id])
     waiter.wait.assert_called_once_with(InstanceIds=[controller.instance_id])
     assert controller.availability_zone == "eu-west-1a"
+
+
+@mock.patch("alpaca.remote_controller.boto3.client")
+def test_wait_for_ssm_registration_succeeds_immediately(mock_boto_client):
+    ssm = mock.Mock()
+    mock_boto_client.return_value = ssm
+    ssm.describe_instance_information.return_value = {
+        "InstanceInformationList": [{"PingStatus": "Online"}]
+    }
+
+    controller = RemoteController(CONFIG_PATH)
+    controller.instance_id = "i-fakeinstance"
+
+    controller._wait_for_ssm_registration()
+
+    mock_boto_client.assert_called_once_with("ssm", region_name=CONFIG["AWS_REGION"])
+    ssm.describe_instance_information.assert_called_once_with(
+        Filters=[{"Key": "InstanceIds", "Values": ["i-fakeinstance"]}]
+    )
+
+
+@mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.boto3.client")
+def test_wait_for_ssm_registration_retries_until_online(mock_boto_client, mock_sleep):
+    ssm = mock.Mock()
+    mock_boto_client.return_value = ssm
+    ssm.describe_instance_information.side_effect = [
+        {"InstanceInformationList": []},
+        {"InstanceInformationList": [{"PingStatus": "ConnectionLost"}]},
+        {"InstanceInformationList": [{"PingStatus": "Online"}]},
+    ]
+
+    controller = RemoteController(CONFIG_PATH)
+    controller.instance_id = "i-fakeinstance"
+
+    controller._wait_for_ssm_registration()
+
+    assert ssm.describe_instance_information.call_count == 3
+    assert mock_sleep.call_count == 2
+
+
+@mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.boto3.client")
+def test_wait_for_ssm_registration_fails_after_max_retries(mock_boto_client, mock_sleep):
+    ssm = mock.Mock()
+    mock_boto_client.return_value = ssm
+    ssm.describe_instance_information.return_value = {"InstanceInformationList": []}
+
+    controller = RemoteController(CONFIG_PATH)
+    controller.instance_id = "i-fakeinstance"
+    controller.config["SSH_MAX_RETRIES"] = 3
+
+    with pytest.raises(OasisAlpacaError):
+        controller._wait_for_ssm_registration()
+
+    assert ssm.describe_instance_information.call_count == 3
 
 
 @mock.patch("alpaca.remote_controller.boto3.client")

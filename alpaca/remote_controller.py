@@ -98,8 +98,9 @@ class RemoteController:
         1. Creates an EC2 client for the configured AWS region
         2. Launches a new EC2 instance with the specified configuration
         3. Waits for the instance to reach 'running' state
-        4. Establishes an SSH connection (with retries)
-        5. Installs Python and OasisLMF dependencies on the EC2 instance.
+        4. Waits for the instance's SSM Agent to register
+        5. Establishes an SSH connection over SSM (with retries)
+        6. Installs Python and OasisLMF dependencies on the EC2 instance.
 
         Raises:
             OasisAlpacaError: If any step in the setup process fails.
@@ -108,6 +109,7 @@ class RemoteController:
             self.ec2 = boto3.client("ec2", region_name=self.config.get("AWS_REGION", 'eu-west-1'))
             self.instance_id = self._create_instance()
             self.public_ip = self._wait_for_instance()
+            self._wait_for_ssm_registration()
             self.ssh = self._wait_for_ssh()
             self.run_commands(setup_python_commands(self.config.get('OASISLMF_VERSION', None)))
         except KeyboardInterrupt:
@@ -287,6 +289,33 @@ class RemoteController:
 
         logger.info(f"Instance public IP: {public_ip}")
         return public_ip
+
+    def _wait_for_ssm_registration(self):
+        """Wait for the instance's SSM Agent to register, with retries.
+
+        Reaching EC2 'running' state only means the VM has booted, not that the SSM Agent has
+        started and registered yet. Waiting for that here avoids racing doomed SSH-over-SSM
+        connection attempts against an agent that isn't ready.
+
+        Raises:
+            OasisAlpacaError: If the instance doesn't register with SSM after SSH_MAX_RETRIES
+                attempts (default: 60 retries = 3 minutes).
+        """
+        logger.info("Waiting for SSM Agent to register")
+        ssm = boto3.client("ssm", region_name=self.config.get("AWS_REGION", 'eu-west-1'))
+
+        max_retries = int(self.config.get("SSH_MAX_RETRIES", 60))
+        retry_count = 0
+
+        while retry_count < max_retries:
+            resp = ssm.describe_instance_information(Filters=[{"Key": "InstanceIds", "Values": [self.instance_id]}])
+            if any(info["PingStatus"] == "Online" for info in resp["InstanceInformationList"]):
+                logger.info("SSM Agent registered")
+                return
+            retry_count += 1
+            if retry_count >= max_retries:
+                raise OasisAlpacaError(f"Instance did not register with SSM after {max_retries} attempts")
+            time.sleep(3)
 
     def _wait_for_ssh(self):
         """Establish an SSH connection to the instance tunnelled entirely over SSM, with retries.
