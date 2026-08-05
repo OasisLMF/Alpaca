@@ -1,0 +1,25 @@
+# Docstring enforcement only, matching the ruff config used by OasisLMF.
+# ruff is not used as a general linter here: flake8 and autopep8 cover PEP8.
+line-length = 150
+
+[lint]
+# Structural Google-docstring rules, which the codebase satisfies without any
+# rewording, plus D102/D103/D105/D107 so that every function and method is
+# required to have a docstring at all.
+#
+# Deliberately excluded: the prose rules (D205 blank line, D400/D415
+# punctuation, D403 first-word case, D417 arg descriptions) and the presence
+# rules for modules, classes and packages (D100, D101, D104, D106).
+select = [
+    "D102", "D103", "D105", "D107",
+    "D206", "D207", "D208", "D209", "D210", "D214", "D300",
+    "D400", "D403", "D405", "D410", "D411", "D412", "D416", "D419",
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+# A test's name describes its case, so docstrings there stay optional. The
+# structural rules still apply to the ones that do have a docstring.
+"tests/**" = ["D102", "D103", "D105", "D107"]

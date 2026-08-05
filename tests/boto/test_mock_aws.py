@@ -9,15 +9,38 @@ import boto3
 from alpaca.remote_controller import RemoteController
 
 
+def create_instance_profile(name='test-profile'):
+    """Create an instance profile in moto, as run_instances requires one to exist."""
+    iam = boto3.client('iam', region_name='us-east-1')
+    iam.create_role(
+        RoleName=f'{name}-role',
+        AssumeRolePolicyDocument=json.dumps({
+            'Version': '2012-10-17',
+            'Statement': [{
+                'Effect': 'Allow',
+                'Principal': {'Service': 'ec2.amazonaws.com'},
+                'Action': 'sts:AssumeRole'
+            }]
+        })
+    )
+    iam.create_instance_profile(InstanceProfileName=name)
+    iam.add_role_to_instance_profile(
+        InstanceProfileName=name,
+        RoleName=f'{name}-role'
+    )
+    return name
+
+
 @pytest.fixture
 def config_file():
-    """Create a temporary config file"""
+    """Create a temporary config file."""
     config = {
         "AWS_REGION": "us-east-1",
         "AMI_ID": "ami-12345678",
         "INSTANCE_TYPE": "t3.small",
         "SECURITY_GROUP_ID": "sg-12345678",
         "SUBNET_ID": "subnet-12345678",
+        "IAM_INSTANCE_PROFILE": "test-profile",
         "DISK_GB": 50,
         "EC2_NAME": "test-instance",
         "MAX_LIFETIME_HOURS": 1,
@@ -35,10 +58,11 @@ def config_file():
 
 @mock_aws
 def test_remote_controller_creates_ec2_instance(config_file):
-    """Test that RemoteController successfully creates an EC2 instance"""
+    """Test that RemoteController successfully creates an EC2 instance."""
 
     # Set up moto's mock AWS environment
     ec2 = boto3.client('ec2', region_name='us-east-1')
+    create_instance_profile()
 
     # Create VPC and networking (required for EC2)
     vpc = ec2.create_vpc(CidrBlock='10.0.0.0/16')
@@ -102,29 +126,11 @@ def test_remote_controller_creates_ec2_instance(config_file):
 
 @mock_aws
 def test_remote_controller_with_iam_role(config_file):
-    """Test that RemoteController handles IAM instance profiles correctly"""
+    """Test that RemoteController handles IAM instance profiles correctly."""
 
     # Set up AWS mocks
     ec2 = boto3.client('ec2', region_name='us-east-1')
-    iam = boto3.client('iam', region_name='us-east-1')
-
-    # Create IAM role and instance profile
-    iam.create_role(
-        RoleName='test-role',
-        AssumeRolePolicyDocument=json.dumps({
-            'Version': '2012-10-17',
-            'Statement': [{
-                'Effect': 'Allow',
-                'Principal': {'Service': 'ec2.amazonaws.com'},
-                'Action': 'sts:AssumeRole'
-            }]
-        })
-    )
-    iam.create_instance_profile(InstanceProfileName='test-profile')
-    iam.add_role_to_instance_profile(
-        InstanceProfileName='test-profile',
-        RoleName='test-role'
-    )
+    profile_name = create_instance_profile()
 
     # Create VPC resources
     vpc = ec2.create_vpc(CidrBlock='10.0.0.0/16')
@@ -139,7 +145,7 @@ def test_remote_controller_with_iam_role(config_file):
         config = json.load(f)
     config['SUBNET_ID'] = subnet['Subnet']['SubnetId']
     config['SECURITY_GROUP_ID'] = sg['GroupId']
-    config['IAM_INSTANCE_PROFILE'] = 'test-profile'
+    config['IAM_INSTANCE_PROFILE'] = profile_name
     with open(config_file, 'w') as f:
         json.dump(config, f)
 
@@ -155,17 +161,18 @@ def test_remote_controller_with_iam_role(config_file):
     instances = ec2.describe_instances(InstanceIds=[controller.instance_id])
     instance = instances['Reservations'][0]['Instances'][0]
     assert 'IamInstanceProfile' in instance
-    assert instance['IamInstanceProfile']['Arn'].endswith('test-profile')
+    assert instance['IamInstanceProfile']['Arn'].endswith(profile_name)
 
     controller.shutdown()
 
 
 @mock_aws
 def test_remote_controller_context_manager(config_file):
-    """Test that context manager properly sets up and tears down resources"""
+    """Test that context manager properly sets up and tears down resources."""
 
     # Set up moto environment
     ec2 = boto3.client('ec2', region_name='us-east-1')
+    create_instance_profile()
     vpc = ec2.create_vpc(CidrBlock='10.0.0.0/16')
     subnet = ec2.create_subnet(VpcId=vpc['Vpc']['VpcId'], CidrBlock='10.0.1.0/24')
     sg = ec2.create_security_group(
@@ -204,7 +211,7 @@ def test_remote_controller_context_manager(config_file):
 
 @mock_aws
 def test_remote_controller_config_from_environment():
-    """Test that configuration can be overridden by environment variables"""
+    """Test that configuration can be overridden by environment variables."""
     import os
 
     # Minimal config file
@@ -255,7 +262,7 @@ def test_remote_controller_config_from_environment():
 
 @mock_aws
 def test_remote_controller_shutdown_without_instance():
-    """Test that shutdown handles case when no instance was created"""
+    """Test that shutdown handles case when no instance was created."""
     config = {
         "AWS_REGION": "us-east-1",
         "AMI_ID": "ami-12345678",

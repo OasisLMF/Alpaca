@@ -2,7 +2,7 @@ from alpaca.model.scripts import model_run_commands
 
 
 def test_model_run_commands_runs_oasislmf():
-    """Test that model_run_commands will execute oasislmf model run"""
+    """Test that model_run_commands will execute oasislmf model run."""
     config_path = "/path/to/config.json"
     commands = model_run_commands(config_path)
 
@@ -15,7 +15,7 @@ def test_model_run_commands_runs_oasislmf():
 
 
 def test_model_run_commands_with_relative_path():
-    """Test that model_run_commands works with relative paths"""
+    """Test that model_run_commands works with relative paths."""
     config_path = "./config.json"
     commands = model_run_commands(config_path)
 

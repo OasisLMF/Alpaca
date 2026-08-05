@@ -28,4 +28,5 @@ ALPACA_IMAGE = r"""
 
 
 def print_alpaca():
+    """Print the Alpaca ASCII art banner in yellow."""
     print(colored(ALPACA_IMAGE, "yellow"))

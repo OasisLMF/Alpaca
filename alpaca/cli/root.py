@@ -11,7 +11,7 @@ logging.basicConfig(
 
 
 def main():
-    """Main entry point for the Alpaca CLI. Goes to subcommand of first input or help if none given"""
+    """Main entry point for the Alpaca CLI. Goes to subcommand of first input or help if none given."""
     args = sys.argv
     if len(args) == 1:
         alpaca_help()

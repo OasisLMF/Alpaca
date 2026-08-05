@@ -21,7 +21,6 @@ with open(CONFIG_PATH, "r") as f:
 @mock.patch.object(RemoteController, "shutdown")
 def test_context_manager_calls_setup_and_shutdown(mock_shutdown, mock_setup):
     with RemoteController(CONFIG_PATH, {}) as rc:
-        # Check instantiates vars
         assert rc.ec2 is None
         assert rc.ssh is None
         assert rc.instance_id is None
@@ -45,9 +44,9 @@ def test_context_manager_checks_config(mock_shutdown, mock_setup):
         pass
 
 
-@mock.patch("alpaca.remote_controller.boto3.client")
-def test_setup_instance_success(mock_boto_client):
+def test_setup_instance_success():
     controller = RemoteController(CONFIG_PATH, [])
+    controller.session = mock.Mock()
 
     controller._create_instance = mock.Mock(return_value="instancey mcinstanceface")
     controller._wait_for_instance = mock.Mock(return_value="2.3.5.7")
@@ -56,14 +55,11 @@ def test_setup_instance_success(mock_boto_client):
     controller.run_commands = mock.Mock()
     controller.shutdown = mock.Mock()
 
-    mock_ec2 = mock.Mock()
-    mock_boto_client.return_value = mock_ec2
+    mock_ec2 = controller.session.client.return_value
 
     controller.setup_instance()
 
-    mock_boto_client.assert_called_once_with(
-        "ec2", region_name=CONFIG["AWS_REGION"]
-    )
+    controller.session.client.assert_called_once_with("ec2")
 
     controller._create_instance.assert_called_once()
     controller._wait_for_instance.assert_called_once()
@@ -71,7 +67,7 @@ def test_setup_instance_success(mock_boto_client):
     controller._wait_for_ssh.assert_called_once()
 
     controller.run_commands.assert_called_once_with(
-        setup_python_commands(CONFIG["OASISLMF_VERSION"])
+        setup_python_commands(CONFIG["OASISLMF_VERSION"], None), check=True
     )
 
     controller.shutdown.assert_not_called()
@@ -81,10 +77,30 @@ def test_setup_instance_success(mock_boto_client):
     assert controller.public_ip == "2.3.5.7"
 
 
-@mock.patch("alpaca.remote_controller.boto3")
-def test_setup_instance_failure(mock_boto):
-    mock_boto.client = mock.Mock(side_effect=ValueError())
+def test_setup_instance_passes_branch_to_install():
+    """Test that OASISLMF_BRANCH reaches the install commands run on the instance."""
     controller = RemoteController(CONFIG_PATH, [])
+    controller.session = mock.Mock()
+    controller.config["OASISLMF_BRANCH"] = "develop"
+
+    controller._create_instance = mock.Mock(return_value="instance id")
+    controller._wait_for_instance = mock.Mock(return_value="2.3.5.7")
+    controller._wait_for_ssm_registration = mock.Mock()
+    controller._wait_for_ssh = mock.Mock(return_value=mock.Mock())
+    controller.run_commands = mock.Mock()
+
+    controller.setup_instance()
+
+    controller.run_commands.assert_called_once_with(
+        setup_python_commands(CONFIG["OASISLMF_VERSION"], "develop"), check=True
+    )
+    assert any("--branch develop" in command for command in controller.run_commands.call_args[0][0])
+
+
+def test_setup_instance_failure():
+    controller = RemoteController(CONFIG_PATH, [])
+    controller.session = mock.Mock()
+    controller.session.client = mock.Mock(side_effect=ValueError())
     controller.shutdown = mock.Mock()
     with pytest.raises(OasisAlpacaError):
         controller.setup_instance()
@@ -126,6 +142,52 @@ def test_run_commands():
     assert commands == commands_taken
     assert controller.ssh.exec_command.call_count == 3
     assert controller._ssh_logs_unimportant.call_count == 3
+
+
+def test_run_commands_check_raises_on_failure():
+    """Test that check stops at the first failing command and reports its output."""
+    controller = RemoteController(CONFIG_PATH)
+    controller.ssh = mock.Mock()
+    stdout = mock.Mock()
+    stdout.channel.recv_exit_status.return_value = 1
+    controller.ssh.exec_command.return_value = (mock.Mock(), stdout, mock.Mock())
+    controller._ssh_logs_unimportant = mock.Mock(return_value="ERROR: No matching distribution found")
+
+    with pytest.raises(OasisAlpacaError) as excinfo:
+        controller.run_commands(["failing command", "never reached"], check=True)
+
+    assert "failing command" in str(excinfo.value)
+    assert "No matching distribution found" in str(excinfo.value)
+    assert controller.ssh.exec_command.call_count == 1
+
+
+def test_run_commands_check_passes_on_success():
+    """Test that check runs every command when they all exit zero."""
+    controller = RemoteController(CONFIG_PATH)
+    controller.ssh = mock.Mock()
+    stdout = mock.Mock()
+    stdout.channel.recv_exit_status.return_value = 0
+    controller.ssh.exec_command.return_value = (mock.Mock(), stdout, mock.Mock())
+    controller._ssh_logs_unimportant = mock.Mock(return_value="")
+
+    controller.run_commands(["command 1", "command 2"], check=True)
+
+    assert controller.ssh.exec_command.call_count == 2
+
+
+def test_run_commands_without_check_ignores_failure():
+    """Test that a failing command is only logged when check is not set."""
+    controller = RemoteController(CONFIG_PATH)
+    controller.ssh = mock.Mock()
+    stdout = mock.Mock()
+    stdout.channel.recv_exit_status.return_value = 1
+    controller.ssh.exec_command.return_value = (mock.Mock(), stdout, mock.Mock())
+    controller._ssh_logs_unimportant = mock.Mock(return_value="")
+
+    controller.run_commands(["failing command", "still runs"])
+
+    assert controller.ssh.exec_command.call_count == 2
+    stdout.channel.recv_exit_status.assert_not_called()
 
 
 def test_run_commands_condition():
@@ -257,11 +319,14 @@ def test__create_instance_iam_instance(mock_time):
 
 
 @mock.patch("alpaca.remote_controller.time")
-def test__create_instance_no_iam_instance(mock_time):
+def test__create_instance_uses_defaults(mock_time):
+    """Optional config falls back to defaults. IAM_INSTANCE_PROFILE is not optional: it is
+    required by every entrypoint, since the SSM Agent needs a role to register with.
+    """
     mock_time.time.return_value = 42
     controller = RemoteController(CONFIG_PATH)
     new_config = CONFIG.copy()
-    default_config = ["IAM_INSTANCE_PROFILE", "INSTANCE_TYPE", "DISK_GB", "EC2_NAME"]
+    default_config = ["INSTANCE_TYPE", "DISK_GB", "EC2_NAME"]
     new_config = {key: value for key, value in new_config.items() if key not in default_config}
     controller.config = new_config
     controller.ec2 = mock.Mock()
@@ -297,7 +362,8 @@ def test__create_instance_no_iam_instance(mock_time):
                     "DeleteOnTermination": True
                 }
             }
-        ]
+        ],
+        "IamInstanceProfile": {'Name': CONFIG["IAM_INSTANCE_PROFILE"]}
     }
     assert controller._create_instance() == 99
     controller.ec2.run_instances.assert_called_once_with(**expected_config)
@@ -318,37 +384,35 @@ def test__wait_for_instance():
     assert controller.availability_zone == "eu-west-1a"
 
 
-@mock.patch("alpaca.remote_controller.boto3.client")
-def test_wait_for_ssm_registration_succeeds_immediately(mock_boto_client):
-    ssm = mock.Mock()
-    mock_boto_client.return_value = ssm
+def test_wait_for_ssm_registration_succeeds_immediately():
+    controller = RemoteController(CONFIG_PATH)
+    controller.session = mock.Mock()
+    ssm = controller.session.client.return_value
     ssm.describe_instance_information.return_value = {
         "InstanceInformationList": [{"PingStatus": "Online"}]
     }
 
-    controller = RemoteController(CONFIG_PATH)
     controller.instance_id = "i-fakeinstance"
 
     controller._wait_for_ssm_registration()
 
-    mock_boto_client.assert_called_once_with("ssm", region_name=CONFIG["AWS_REGION"])
+    controller.session.client.assert_called_once_with("ssm")
     ssm.describe_instance_information.assert_called_once_with(
         Filters=[{"Key": "InstanceIds", "Values": ["i-fakeinstance"]}]
     )
 
 
 @mock.patch("alpaca.remote_controller.time.sleep")
-@mock.patch("alpaca.remote_controller.boto3.client")
-def test_wait_for_ssm_registration_retries_until_online(mock_boto_client, mock_sleep):
-    ssm = mock.Mock()
-    mock_boto_client.return_value = ssm
+def test_wait_for_ssm_registration_retries_until_online(mock_sleep):
+    controller = RemoteController(CONFIG_PATH)
+    controller.session = mock.Mock()
+    ssm = controller.session.client.return_value
     ssm.describe_instance_information.side_effect = [
         {"InstanceInformationList": []},
         {"InstanceInformationList": [{"PingStatus": "ConnectionLost"}]},
         {"InstanceInformationList": [{"PingStatus": "Online"}]},
     ]
 
-    controller = RemoteController(CONFIG_PATH)
     controller.instance_id = "i-fakeinstance"
 
     controller._wait_for_ssm_registration()
@@ -358,13 +422,12 @@ def test_wait_for_ssm_registration_retries_until_online(mock_boto_client, mock_s
 
 
 @mock.patch("alpaca.remote_controller.time.sleep")
-@mock.patch("alpaca.remote_controller.boto3.client")
-def test_wait_for_ssm_registration_fails_after_max_retries(mock_boto_client, mock_sleep):
-    ssm = mock.Mock()
-    mock_boto_client.return_value = ssm
+def test_wait_for_ssm_registration_fails_after_max_retries(mock_sleep):
+    controller = RemoteController(CONFIG_PATH)
+    controller.session = mock.Mock()
+    ssm = controller.session.client.return_value
     ssm.describe_instance_information.return_value = {"InstanceInformationList": []}
 
-    controller = RemoteController(CONFIG_PATH)
     controller.instance_id = "i-fakeinstance"
     controller.config["SSH_MAX_RETRIES"] = 3
 
@@ -374,21 +437,20 @@ def test_wait_for_ssm_registration_fails_after_max_retries(mock_boto_client, moc
     assert ssm.describe_instance_information.call_count == 3
 
 
-@mock.patch("alpaca.remote_controller.boto3.client")
 @mock.patch("alpaca.remote_controller.paramiko")
-def test_wait_for_ssh(paramiko, mock_boto_client):
+def test_wait_for_ssh(paramiko):
     ssh = mock.Mock()
     paramiko.SSHClient.return_value = ssh
-    instance_connect = mock.Mock()
-    mock_boto_client.return_value = instance_connect
 
     controller = RemoteController(CONFIG_PATH)
+    controller.session = mock.Mock()
+    instance_connect = controller.session.client.return_value
     controller.instance_id = "i-fakeinstance"
     controller.availability_zone = "eu-west-1a"
 
     assert controller._wait_for_ssh() == ssh
 
-    mock_boto_client.assert_called_once_with("ec2-instance-connect", region_name=CONFIG["AWS_REGION"])
+    controller.session.client.assert_called_once_with("ec2-instance-connect")
     instance_connect.send_ssh_public_key.assert_called_once_with(
         InstanceId="i-fakeinstance",
         InstanceOSUser="ubuntu",
@@ -397,41 +459,41 @@ def test_wait_for_ssh(paramiko, mock_boto_client):
     )
     paramiko.ProxyCommand.assert_called_once()
     ssh.connect.assert_called_once_with(
-        "i-fakeinstance", username="ubuntu", pkey=mock.ANY, sock=paramiko.ProxyCommand.return_value, timeout=5
+        "i-fakeinstance", username="ubuntu", pkey=mock.ANY, sock=paramiko.ProxyCommand.return_value, timeout=15
     )
 
 
 @mock.patch("alpaca.remote_controller.time.sleep")
-@mock.patch("alpaca.remote_controller.boto3.client")
 @mock.patch("alpaca.remote_controller.paramiko")
-def test_wait_for_ssh_retries_on_failure(paramiko, mock_boto_client, mock_sleep):
-    """Test that _wait_for_ssh will retry when SSH connection fails"""
+def test_wait_for_ssh_retries_on_failure(paramiko, mock_sleep):
+    """Test that _wait_for_ssh will retry when SSH connection fails."""
     ssh = mock.Mock()
     paramiko.SSHClient.return_value = ssh
     # First two attempts fail, third succeeds
     ssh.connect.side_effect = [Exception("Connection refused"), Exception("Timeout"), None]
 
     controller = RemoteController(CONFIG_PATH)
+    controller.session = mock.Mock()
     result = controller._wait_for_ssh()
 
     assert result == ssh
     assert ssh.connect.call_count == 3
     assert mock_sleep.call_count == 2
     # A fresh authorization is pushed before every attempt, since the ephemeral key only lives 60s
-    instance_connect = mock_boto_client.return_value
+    instance_connect = controller.session.client.return_value
     assert instance_connect.send_ssh_public_key.call_count == 3
 
 
 @mock.patch("alpaca.remote_controller.time.sleep")
-@mock.patch("alpaca.remote_controller.boto3.client")
 @mock.patch("alpaca.remote_controller.paramiko")
-def test_wait_for_ssh_fails_after_max_retries(paramiko, mock_boto_client, mock_sleep):
-    """Test that _wait_for_ssh raises error after exceeding max retries"""
+def test_wait_for_ssh_fails_after_max_retries(paramiko, mock_sleep):
+    """Test that _wait_for_ssh raises error after exceeding max retries."""
     ssh = mock.Mock()
     paramiko.SSHClient.return_value = ssh
     ssh.connect.side_effect = Exception("Connection refused")
 
     controller = RemoteController(CONFIG_PATH)
+    controller.session = mock.Mock()
     controller.config["SSH_MAX_RETRIES"] = 3
 
     with pytest.raises(OasisAlpacaError):
@@ -441,36 +503,102 @@ def test_wait_for_ssh_fails_after_max_retries(paramiko, mock_boto_client, mock_s
 
 
 @mock.patch("alpaca.remote_controller.time.sleep")
-@mock.patch("alpaca.remote_controller.boto3.client")
 @mock.patch("alpaca.remote_controller.paramiko")
-def test_wait_for_ssh_sleeps_between_retries(paramiko, mock_boto_client, mock_sleep):
-    """Test that _wait_for_ssh sleeps between retry attempts"""
+def test_wait_for_ssh_sleeps_between_retries(paramiko, mock_sleep):
+    """Test that _wait_for_ssh sleeps between retry attempts."""
     ssh = mock.Mock()
     paramiko.SSHClient.return_value = ssh
     ssh.connect.side_effect = [Exception("Failed"), None]
 
     controller = RemoteController(CONFIG_PATH)
+    controller.session = mock.Mock()
     controller._wait_for_ssh()
 
     mock_sleep.assert_called_once_with(3)
 
 
-@mock.patch("alpaca.remote_controller.boto3.client")
+@mock.patch("alpaca.remote_controller.time.sleep")
 @mock.patch("alpaca.remote_controller.paramiko")
-def test_wait_for_ssh_reraises_after_connect_failure(paramiko, mock_boto_client):
-    """Test that a failure to push the ephemeral key is retried just like a connect failure"""
-    instance_connect = mock.Mock()
-    mock_boto_client.return_value = instance_connect
-    instance_connect.send_ssh_public_key.side_effect = [Exception("not registered yet"), None]
+def test_wait_for_ssh_retries_when_key_authorization_fails(paramiko, mock_sleep):
+    """Test that a failure to push the ephemeral key is retried just like a connect failure."""
     ssh = mock.Mock()
     paramiko.SSHClient.return_value = ssh
 
     controller = RemoteController(CONFIG_PATH)
-    with mock.patch("alpaca.remote_controller.time.sleep"):
-        assert controller._wait_for_ssh() == ssh
+    controller.session = mock.Mock()
+    instance_connect = controller.session.client.return_value
+    instance_connect.send_ssh_public_key.side_effect = [Exception("not registered yet"), None]
+
+    assert controller._wait_for_ssh() == ssh
 
     assert instance_connect.send_ssh_public_key.call_count == 2
     ssh.connect.assert_called_once()
+
+
+@mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.paramiko")
+def test_wait_for_ssh_closes_failed_attempt(paramiko, mock_sleep):
+    """Test that a failed attempt tears down its client and SSM tunnel before retrying,
+    otherwise every retry leaks an 'aws ssm start-session' subprocess.
+    """
+    ssh = mock.Mock()
+    paramiko.SSHClient.return_value = ssh
+    ssh.connect.side_effect = [Exception("Connection refused"), None]
+
+    controller = RemoteController(CONFIG_PATH)
+    controller.session = mock.Mock()
+    controller._wait_for_ssh()
+
+    ssh.close.assert_called_once_with()
+    paramiko.ProxyCommand.return_value.close.assert_called_once_with()
+
+
+@mock.patch("alpaca.remote_controller.time.sleep")
+@mock.patch("alpaca.remote_controller.paramiko")
+def test_wait_for_ssh_survives_failure_during_teardown(paramiko, mock_sleep):
+    """Test that an error while tearing down a failed attempt does not mask the connection
+    error or abandon the remaining retries.
+    """
+    ssh = mock.Mock()
+    paramiko.SSHClient.return_value = ssh
+    ssh.connect.side_effect = [Exception("Connection refused"), None]
+    ssh.close.side_effect = ProcessLookupError("already gone")
+    paramiko.ProxyCommand.return_value.close.side_effect = ProcessLookupError("already gone")
+
+    controller = RemoteController(CONFIG_PATH)
+    controller.session = mock.Mock()
+
+    assert controller._wait_for_ssh() == ssh
+    assert ssh.connect.call_count == 2
+
+
+@mock.patch("alpaca.remote_controller.boto3.Session")
+def test_aws_client_without_profile(mock_session):
+    controller = RemoteController(CONFIG_PATH)
+    controller.config.pop("AWS_PROFILE", None)
+
+    client = controller._aws_client("ssm")
+
+    mock_session.assert_called_once_with(profile_name=None, region_name=CONFIG["AWS_REGION"])
+    mock_session.return_value.client.assert_called_once_with("ssm")
+    assert client is mock_session.return_value.client.return_value
+
+
+@mock.patch("alpaca.remote_controller.boto3.Session")
+def test_aws_client_uses_profile_for_every_client(mock_session):
+    """AWS_PROFILE must reach boto3 as well as the SSM tunnel, otherwise the instance is
+    created and polled under the default profile while the tunnel uses the named one.
+    """
+    controller = RemoteController(CONFIG_PATH)
+    controller.config["AWS_PROFILE"] = "oasis"
+
+    controller._aws_client("ec2")
+    controller._aws_client("ec2-instance-connect")
+
+    mock_session.assert_called_once_with(profile_name="oasis", region_name=CONFIG["AWS_REGION"])
+    assert controller.session is mock_session.return_value
+    assert mock_session.return_value.client.call_args_list == [mock.call("ec2"), mock.call("ec2-instance-connect")]
+    assert " --profile oasis" in controller._ssm_proxy_command()
 
 
 def test_ssm_proxy_command_without_profile():
@@ -493,7 +621,7 @@ def test_ssm_proxy_command_with_profile():
 
 
 def test_run_commands_with_empty_list():
-    """Test that run_commands handles empty command list"""
+    """Test that run_commands handles empty command list."""
     controller = RemoteController(CONFIG_PATH)
     controller.ssh = mock.Mock()
 
@@ -503,7 +631,7 @@ def test_run_commands_with_empty_list():
 
 
 def test_context_manager_calls_shutdown_on_exception():
-    """Test that context manager calls shutdown even when exception occurs"""
+    """Test that context manager calls shutdown even when exception occurs."""
     controller = RemoteController(CONFIG_PATH)
     controller.setup_instance = mock.Mock()
     controller.shutdown = mock.Mock()
@@ -518,7 +646,7 @@ def test_context_manager_calls_shutdown_on_exception():
 
 
 def test_shutdown_with_no_ssh_connection():
-    """Test that shutdown handles case when SSH connection doesn't exist"""
+    """Test that shutdown handles case when SSH connection doesn't exist."""
     controller = RemoteController(CONFIG_PATH)
     controller.instance_id = "test-id"
     controller.ec2 = mock.Mock()
@@ -532,7 +660,7 @@ def test_shutdown_with_no_ssh_connection():
 
 
 def test_upload_model_runs_model_requirements():
-    """Test that upload_model will install model requirements after downloading"""
+    """Test that upload_model will install model requirements after downloading."""
     repo = "https://github.com/test/repo"
     controller = RemoteController(CONFIG_PATH)
     controller.run_commands = mock.Mock()

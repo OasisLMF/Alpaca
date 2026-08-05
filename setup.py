@@ -3,6 +3,11 @@ import pathlib
 
 
 def get_install_requirements():
+    """Read the install requirements from requirements.txt.
+
+    Returns:
+        list[str]: Requirement lines to pass to setuptools.
+    """
     with open(pathlib.Path(__file__).parent / "requirements.txt", "r") as reqs_file:
         return reqs_file.readlines()
 

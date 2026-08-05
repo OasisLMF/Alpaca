@@ -13,11 +13,32 @@ both set, or to have credentials in a .aws folder, which can be obtained with th
 
 ## Connecting to instances
 Alpaca connects to instances entirely over AWS Systems Manager (SSM) rather than a static
-`.pem` key, so there's no `KEY_NAME` / `KEY_PATH` config or key file to manage. This does mean
-your local machine needs the AWS CLI v2 and Session Manager plugin installed, and
-`IAM_INSTANCE_PROFILE` is now a required config value with SSM permissions attached (e.g. the
-`AmazonSSMManagedInstanceCore` managed policy). If your AWS CLI uses a named profile, set the
-optional `AWS_PROFILE` config value to match.
+`.pem` key, so there's no `KEY_NAME` / `KEY_PATH` config or key file to manage. Each run
+generates a throwaway SSH keypair in memory, authorises it on the instance for 60 seconds via
+EC2 Instance Connect, and tunnels the SSH session through
+`aws ssm start-session --document-name AWS-StartSSHSession`.
+
+A few things need to be in place for that to work:
+
+* **On your machine**: both the AWS CLI v2 and the
+  [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+  must be installed and on your `PATH`. Alpaca shells out to `aws ssm start-session`, so if
+  either is missing you will see connection attempts time out rather than a clear error.
+* **Your AWS user or role** needs `ssm:StartSession` (on the instance and on the
+  `AWS-StartSSHSession` document), `ssm:DescribeInstanceInformation` and
+  `ec2-instance-connect:SendSSHPublicKey` in addition to the usual EC2 permissions. This is new:
+  with `.pem` keys, connecting needed no SSM or Instance Connect permissions at all.
+* **`IAM_INSTANCE_PROFILE`** is now a required config value, and the role behind it must let the
+  SSM Agent register. The `AmazonSSMManagedInstanceCore` managed policy is enough, alongside
+  whatever S3 access your run needs.
+* **`AMI_ID`** must point at an image with both the SSM Agent and the `ec2-instance-connect`
+  package preinstalled. Canonical's Ubuntu 20.04+ and Amazon Linux 2 images have both; a
+  stripped-down custom image may not, and the failure looks like Alpaca waiting out its retries.
+* **`SECURITY_GROUP_ID`** no longer needs an inbound port 22 rule, as nothing connects to the
+  instance directly. Only outbound access is required (for pip, GitHub and S3).
+
+If your AWS CLI uses a named profile, set the optional `AWS_PROFILE` config value; it is applied
+to both the boto3 calls and the SSM tunnel.
 
 ## Config
 To use Alpaca, first create an alpaca config. This can be easily done by the command

@@ -4,6 +4,8 @@
 #   - PEP8: the workflow fails if code is not PEP8 compliant
 #   - flake8: the problems identified by flake 8 are listed but the workflow
 #             presently doesn't fail if flake reports errors.
+#   - ruff: fails if docstrings are missing from any function, or are not
+#           formatted in Google style (see ruff.toml).
 
 name: Code Quality
 
@@ -28,11 +30,15 @@ jobs:
           pip install --upgrade pip-tools
 
       - name: install code quality tools
-        run: pip install --upgrade autopep8 flake8
+        run: pip install --upgrade autopep8 flake8 ruff
 
       - name: Run (partial) flake8
         if: ${{ ! cancelled() }}
         run: flake8 --max-line-length 150
+
+      - name: Check docstring presence and formatting (ruff)
+        if: ${{ ! cancelled() }}
+        run: ruff check .
 
       - name: check PEP8 compliance
         if: ${{ ! cancelled() }}

@@ -3,7 +3,7 @@ from alpaca.utils import get_timestamp
 
 def run_pytest_commands(pytest_args=""):
     """Generate commands to install pytest dependencies and run tests.
-    Saves results to timestamped ./pytest_logs/pytest-YYYYMMDDHHMM.txt
+    Saves results to timestamped ./pytest_logs/pytest-YYYYMMDDHHMM.txt.
 
     Args:
         pytest_args: Additional arguments to pass to pytest (e.g., '-k test_name',

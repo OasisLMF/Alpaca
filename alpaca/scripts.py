@@ -2,30 +2,61 @@ from urllib.parse import urlparse
 import re
 
 
-def setup_python_commands(oasislmf_version=None):
+OASISLMF_REPO = "https://github.com/OasisLMF/OasisLMF.git"
+OASISLMF_CLONE_DIR = "/tmp/oasislmf"
+
+
+def setup_python_commands(oasislmf_version=None, oasislmf_branch=None):
     """Generate commands to install Python, pip, AWS CLI, and OasisLMF.
 
     Args:
-        oasislmf_version: Specific version of OasisLMF to install (e.g., '2.0.0').
-            If None, installs the latest version.
+        oasislmf_version: Specific released version of OasisLMF to install (e.g., '2.0.0').
+            Ignored when oasislmf_branch is given.
+        oasislmf_branch: Branch of the OasisLMF repository to install from source.
 
     Returns:
         list[str]: Shell commands to execute in sequence.
     """
-    if oasislmf_version:
-        oasislmf_version = f"=={oasislmf_version}"
-    else:
-        oasislmf_version = ""
     commands = [
         "sudo apt-get update -y",
         "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip unzip curl",
         "curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\"",
         "unzip awscliv2.zip",
         "sudo ./aws/install",
-        f"sudo pip install oasislmf{oasislmf_version} -qq",
-        f"sudo pip install 'oasislmf[extra]{oasislmf_version}' -qq",
     ]
+    commands.extend(oasislmf_install_commands(oasislmf_version, oasislmf_branch))
     return commands
+
+
+def oasislmf_install_commands(oasislmf_version=None, oasislmf_branch=None):
+    """Generate commands to install OasisLMF from a branch, a released version or latest.
+
+    A branch takes priority over a version, and if neither is given the latest release on
+    PyPI is installed.
+
+    Args:
+        oasislmf_version: Specific released version of OasisLMF to install (e.g., '2.0.0').
+            Ignored when oasislmf_branch is given. If both are None, installs the latest.
+        oasislmf_branch: Branch of the OasisLMF repository to install from source.
+
+    Returns:
+        list[str]: Shell commands to execute in sequence.
+    """
+    if oasislmf_branch:
+        return [
+            "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential python3-dev",
+            "sudo pip install --upgrade pip setuptools wheel -qq",
+            f"git clone --depth 1 --branch {oasislmf_branch} {OASISLMF_REPO} {OASISLMF_CLONE_DIR}",
+            f"sudo pip install '{OASISLMF_CLONE_DIR}[extra]'",
+            "oasislmf version",  # <- ensures errors on faulty download
+        ]
+
+    version = f"=={oasislmf_version}" if oasislmf_version else ""
+    return [
+        f"sudo pip install oasislmf{version} -qq",
+        f"sudo pip install 'oasislmf[extra]{version}' -qq",
+        "oasislmf version",
+    ]
 
 
 def download_from_s3_commands(s3_link):
@@ -67,6 +98,7 @@ def download_from_github_commands(github_link):
 def upload_to_s3_commands(remote_link, s3_link):
     """Generate commands to upload model results to an S3 bucket, creating it if it doesn't exist.
     Requires IAM_INSTANCE_PROFILE config with a suitable role.
+
     Args:
         remote_link: Path on the EC2 instance containing results (e.g., '/home/ubuntu/runs').
         s3_link: Destination S3 URI (e.g., 's3://bucket-name/results').
@@ -84,7 +116,7 @@ def upload_to_s3_commands(remote_link, s3_link):
 
 
 def download_only_important_command(loc_from, loc_to):
-    """Generate an S3 copy command to attain all run files except for:
+    """Generate an S3 copy command to attain run files.
 
     Excluded directories:
         - */fifo/*
