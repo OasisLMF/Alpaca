@@ -11,6 +11,14 @@ the instance, boto3 will require either you to have the environment variables
 both set, or to have credentials in a .aws folder, which can be obtained with the command
 `aws configure` using the aws cli.
 
+## Connecting to instances
+Alpaca connects to instances entirely over AWS Systems Manager (SSM) rather than a static
+`.pem` key, so there's no `KEY_NAME` / `KEY_PATH` config or key file to manage. This does mean
+your local machine needs the AWS CLI v2 and Session Manager plugin installed, and
+`IAM_INSTANCE_PROFILE` is now a required config value with SSM permissions attached (e.g. the
+`AmazonSSMManagedInstanceCore` managed policy). If your AWS CLI uses a named profile, set the
+optional `AWS_PROFILE` config value to match.
+
 ## Config
 To use Alpaca, first create an alpaca config. This can be easily done by the command
 `alpaca create-config`
