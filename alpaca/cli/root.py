@@ -1,6 +1,6 @@
 import sys
 from alpaca.cli.images import print_alpaca
-from alpaca.cli.run_start import run_model, run_api, run_pytest
+from alpaca.cli.run_start import run_model, run_api, run_pytest, run_benchmark
 from alpaca.cli.config_router import create_config_router
 
 import logging
@@ -34,7 +34,8 @@ ALPACA_COMMANDS = {
     "model": run_model,
     "create-config": create_config_router,
     "pytest": run_pytest,
-    "api": run_api
+    "api": run_api,
+    "benchmark": run_benchmark
 }
 
 

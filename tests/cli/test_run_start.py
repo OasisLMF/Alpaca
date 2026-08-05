@@ -1,4 +1,4 @@
-from alpaca.cli.run_start import run_model, run_pytest, run_api
+from alpaca.cli.run_start import run_model, run_pytest, run_api, run_benchmark
 from unittest import mock
 
 
@@ -107,3 +107,30 @@ def test_run_model_with_path_containing_special_chars(mock_main):
     config_path = "./configs/my-config.json"
     run_model([config_path])
     mock_main.assert_called_once_with(config_path)
+
+
+@mock.patch("alpaca.cli.run_start.benchmark_main")
+def test_run_benchmark_calls_main_with_config(mock_main):
+    """Test that run_benchmark calls benchmark main with config file path."""
+    config_path = "benchmark_config.json"
+    run_benchmark([config_path])
+    mock_main.assert_called_once_with(config_path)
+
+
+@mock.patch("alpaca.cli.run_start.benchmark_main")
+@mock.patch("builtins.print")
+def test_run_benchmark_prints_help_with_h_flag(mock_print, mock_main):
+    """Test that run_benchmark prints usage with -h flag."""
+    run_benchmark(["-h"])
+    mock_print.assert_called_once()
+    assert "Usage" in mock_print.call_args[0][0]
+    mock_main.assert_not_called()
+
+
+@mock.patch("alpaca.cli.run_start.benchmark_main")
+@mock.patch("builtins.print")
+def test_run_benchmark_prints_help_with_no_args(mock_print, mock_main):
+    """Test that run_benchmark prints usage when no args provided."""
+    run_benchmark([])
+    mock_print.assert_called_once()
+    mock_main.assert_not_called()

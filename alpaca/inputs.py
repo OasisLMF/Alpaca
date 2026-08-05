@@ -16,12 +16,18 @@ LOG_LEVEL = ("LOG_LEVEL", "Verbosity of logging", "INFO")
 MAX_LIFETIME_HOURS = ("MAX_LIFETIME_HOURS", "Max lifetime of EC2 instance in hours", "2")
 OASISLMF_BRANCH = ("OASISLMF_BRANCH", "Branch of the OasisLMF repo to install from source, used in place of OASISLMF_VERSION", "")
 OASISLMF_VERSION = ("OASISLMF_VERSION", "Specific version of OasisLMF to use", "")
+OASISLMF_VERSION_COMPARISON = ("OASISLMF_VERSION_COMPARISON", "Specific version of OasisLMF to benchmark against", "")
 PATH_TO_DOCKER_COMPOSE = ("PATH_TO_DOCKER_COMPOSE", "Path from base of REPO_LOCATION to docker-compose file (or bash script)",
                           "./docker-compose.yml")
 PATH_TO_OASISLMF_JSON = ("PATH_TO_OASISLMF_JSON", "Path from base of REPO_LOCATION to OASISLMF.JSON file", "./oasislmf.json")
 PYTEST_ARGS = ("PYTEST_ARGS", "Arguments to pass to PyTest (already uses -vv flag)", "")
 REPO_LOCATION = ("REPO_LOCATION", "S3 location (s3://bucket) or link to GitHub repo (https://github.com/name/repo) with data",
                  "https://github.com/OasisLMF/OasisPiWind")
+REPO_LOCATION_COMPARISON = (
+    "REPO_LOCATION_COMPARISON",
+    "S3 location (s3://bucket) or link to GitHub repo (https://github.com/name/repo) to benchmark against",
+    "https://github.com/OasisLMF/OasisPiWind"
+)
 RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket) or local (./path/to/local)", "./runs")
 SECURITY_GROUP_ID = ("SECURITY_GROUP_ID", "Security group id of EC2 instance", "MySecurityGroup")
 SSH_MAX_RETRIES = ("SSH_MAX_RETRIES", "Maximum number of SSH-over-SSM connection attempts before timeout", "60")

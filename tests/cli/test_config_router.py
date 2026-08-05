@@ -1,6 +1,7 @@
 from alpaca.api.utils import REQUIRED_CONFIG_API, OPTIONAL_CONFIG_API
 from alpaca.model.utils import REQUIRED_CONFIG_MODEL, OPTIONAL_CONFIG_MODEL
 from alpaca.pytest.utils import REQUIRED_CONFIG_PYTEST, OPTIONAL_CONFIG_PYTEST
+from alpaca.benchmark.utils import REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK
 from unittest import mock
 from alpaca.cli.config_router import CONFIGS, create_config_router
 
@@ -9,9 +10,11 @@ def test_router_configs():
     assert 'model' in CONFIGS
     assert 'api' in CONFIGS
     assert 'pytest' in CONFIGS
+    assert 'benchmark' in CONFIGS
     assert CONFIGS['api'] == (REQUIRED_CONFIG_API, OPTIONAL_CONFIG_API)
     assert CONFIGS['model'] == (REQUIRED_CONFIG_MODEL, OPTIONAL_CONFIG_MODEL)
     assert CONFIGS['pytest'] == (REQUIRED_CONFIG_PYTEST, OPTIONAL_CONFIG_PYTEST)
+    assert CONFIGS['benchmark'] == (REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK)
 
 
 @mock.patch("alpaca.cli.config_router.create_config")
@@ -30,6 +33,12 @@ def test_router_model_with_arg_config(mock_create_config):
 def test_router_pytest_with_arg_config(mock_create_config):
     create_config_router(["pYtEsT"])
     mock_create_config.assert_called_once_with(REQUIRED_CONFIG_PYTEST, OPTIONAL_CONFIG_PYTEST)
+
+
+@mock.patch("alpaca.cli.config_router.create_config")
+def test_router_benchmark_with_arg_config(mock_create_config):
+    create_config_router(["bEnChMaRk"])
+    mock_create_config.assert_called_once_with(REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK)
 
 
 @mock.patch("alpaca.cli.config_router.input")
