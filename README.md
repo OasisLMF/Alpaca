@@ -75,8 +75,8 @@ command
 to create a platform in EC2 and do an API run.
 
 ## Debug mode
-Setting the optional config value `DEBUG` to `True` (or `ALPACA_DEBUG=True` in the
-environment) steps through the run one command at a time. Before each command Alpaca
+Setting the optional config value `DEBUG` to `True`
+steps through the run one command at a time. Before each command Alpaca
 would normally run, you are shown it and asked what to do:
 
 * **Enter** or **x** runs the command and moves on to the next one.
