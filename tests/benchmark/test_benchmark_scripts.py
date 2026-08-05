@@ -1,4 +1,4 @@
-from alpaca.benchmark.scripts import model_name_from_location, build_benchmark_plan, format_benchmark_plan
+from alpaca.benchmark.scripts import model_name_from_location, build_benchmark_plan, build_execution_plan, format_benchmark_plan
 from alpaca.exceptions import OasisAlpacaConfigError
 
 import pytest
@@ -69,6 +69,21 @@ def test_build_benchmark_plan_raises_on_invalid_execution_mode():
     }
     with pytest.raises(OasisAlpacaConfigError):
         build_benchmark_plan(config)
+
+
+def test_build_execution_plan_matches_documented_shape():
+    config = {"OASISLMF_VERSION": "2.3.3", "OASISLMF_VERSION_COMPARISON": "2.4.9"}
+    assert build_execution_plan(config) == {
+        "baseline": {"version": "2.3.3"},
+        "comparison": {"version": "2.4.9"},
+    }
+
+
+def test_build_execution_plan_defaults_missing_versions_to_latest():
+    assert build_execution_plan({}) == {
+        "baseline": {"version": "latest"},
+        "comparison": {"version": "latest"},
+    }
 
 
 def test_format_benchmark_plan_matches_documented_layout():

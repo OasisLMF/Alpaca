@@ -61,6 +61,25 @@ def build_benchmark_plan(config):
     return {"models": models, "comparisons": comparisons, "execution_mode": execution_mode}
 
 
+def build_execution_plan(config):
+    """Build the baseline and comparison execution targets for a benchmark run.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Returns:
+        dict: {'baseline': {'version': ...}, 'comparison': {'version': ...}}. The
+            baseline target uses OASISLMF_VERSION and the comparison target uses
+            OASISLMF_VERSION_COMPARISON, each falling back to 'latest' when unset,
+            matching how a missing OASISLMF_VERSION defaults to the newest PyPI
+            release elsewhere in Alpaca.
+    """
+    return {
+        "baseline": {"version": config.get("OASISLMF_VERSION") or "latest"},
+        "comparison": {"version": config.get("OASISLMF_VERSION_COMPARISON") or "latest"},
+    }
+
+
 def format_benchmark_plan(plan):
     """Format a benchmark plan for display.
 
