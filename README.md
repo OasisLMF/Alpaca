@@ -74,6 +74,27 @@ command
 `alpaca api <path-to-config>`
 to create a platform in EC2 and do an API run.
 
+## Debug mode
+Setting the optional config value `DEBUG` to `True` (or `ALPACA_DEBUG=True` in the
+environment) steps through the run one command at a time. Before each command Alpaca
+would normally run, you are shown it and asked what to do:
+
+* **Enter** or **x** runs the command and moves on to the next one.
+* **s** skips the command entirely.
+* **t** terminates the instance and stops the run.
+* **anything else** is run on the instance as a command of your own, after which you are
+  asked about the same command again. Use this to look around the instance, fix something
+  by hand, or try a variant of the command before letting the run continue. Your input
+  reaches Alpaca but not the command, so anything that waits for input of its own (an
+  editor, a password prompt, `top`) will hang with no way out but Ctrl-C.
+
+Every command's output is streamed to your terminal in debug mode, including the ones that
+are normally logged only at debug level. Note that the prompt starts at the very first
+setup command, so you will step through the Python and OasisLMF install before reaching
+your model run, and that a failing command does not stop the run as it otherwise would:
+in debug mode it is up to you to decide whether to carry on. Debug mode needs a terminal
+to read from, so it cannot be used for an unattended or CI run.
+
 ## Notes
 Alpaca is currently designed to be ran on instances using Ubuntu. This can be changed in
 the future, but only Ubuntu instances will currently work due to the path /home/ubuntu

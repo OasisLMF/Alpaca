@@ -35,6 +35,11 @@ class RemoteController:
         public_ip (str): Public IP address of the running instance.
         availability_zone (str): Availability zone of the running instance, required to
             authorize the ephemeral SSH key via EC2 Instance Connect.
+        debug (bool): Whether the DEBUG config value is set, in which case every command is
+            confirmed at the prompt before it runs. Off unless DEBUG is 'True', given either
+            as a string or as a JSON boolean.
+        terminated (bool): Whether the instance has already been terminated, so that a second
+            shutdown does not report terminating it again.
 
     Raises:
         OasisAlpacaConfigError: If required configuration keys are missing.
@@ -63,6 +68,7 @@ class RemoteController:
         self.instance_id = None
         self.public_ip = None
         self.availability_zone = None
+        self.terminated = False
         # Set up log levels for all modules
         log_level_str = self.config.get("LOG_LEVEL", "INFO")
         log_level = getattr(logging, log_level_str, logging.INFO)
@@ -70,6 +76,10 @@ class RemoteController:
         logging.getLogger("botocore").setLevel(log_level)
         logging.getLogger("paramiko").setLevel(log_level)
         logging.getLogger("urllib3").setLevel(log_level)
+        # Debug
+        self.debug = str(self.config.get("DEBUG", "False")).lower() == "true"
+        if self.debug:
+            logger.info("Running in debug mode")
 
     def __enter__(self):
         """Sets up the EC2 instance by calling self.setup_instance.
@@ -127,11 +137,13 @@ class RemoteController:
 
     def shutdown(self):
         """Terminates the EC2 instance and close all connections.
-        Called automatically when exiting the context manager.
+        Called automatically when exiting the context manager. Safe to call more than once,
+        as it happens when the instance is terminated from the debug prompt and the error
+        that stops the run then unwinds through the context manager.
         """
         if self.ssh:
             self.ssh.close()
-        if not self.instance_id or not self.ec2:
+        if not self.instance_id or not self.ec2 or self.terminated:
             return
         logger.info(f"Terminating instance {self.instance_id}")
         self.ec2.terminate_instances(InstanceIds=[self.instance_id])
@@ -139,10 +151,16 @@ class RemoteController:
         waiter = self.ec2.get_waiter("instance_terminated")
         waiter.wait(InstanceIds=[self.instance_id])
 
+        self.terminated = True
         logger.info("Instance terminated.")
 
     def run_commands(self, commands, log_condition=None, check=False):
         """Execute shell commands on the remote EC2 instance via SSH.
+
+        In debug mode each command is handed to self._debug_exec_command instead, so that it
+        is confirmed, skipped or replaced at the prompt. Output is always streamed there, and
+        log_condition and check are not applied, as the exit status of whatever the user chose
+        to run is theirs to judge.
 
         Args:
             commands: List of shell command strings to execute sequentially.
@@ -155,10 +173,15 @@ class RemoteController:
                 logged and the remaining commands still run.
 
         Raises:
-            OasisAlpacaError: If check is set and a command exits non-zero.
+            OasisAlpacaError: If check is set and a command exits non-zero, or if the
+                instance is terminated from the debug prompt.
         """
         log_condition = log_condition or (lambda cmd: False)
         for cmd in commands:
+            if self.debug:
+                self._debug_exec_command(cmd)
+                continue
+
             logger.info(f"Executing: {cmd}")
             needs_logs = log_condition(cmd)
             stdin, stdout, stderr = self.ssh.exec_command(cmd, get_pty=needs_logs)
@@ -472,3 +495,35 @@ class RemoteController:
         if err:
             logger.warning(err)
         return "\n".join(stream for stream in (out, err) if stream)
+
+    def _debug_exec_command(self, cmd):
+        """Allows the user to run, skip or make a new command.
+
+        The prompt repeats until the command is either run or skipped, so any number of
+        commands of the user's own can be run against the instance in between.
+
+        Args:
+            cmd: The command Alpaca would run next, offered as the default choice.
+
+        Raises:
+            OasisAlpacaError: If the user terminates the instance, so that the run stops
+                rather than sending later commands over the closed connection.
+        """
+        done = False
+        while not done:
+            response = input(f"Next command: {cmd}\n"
+                             "Enter or x to execute, s to skip, t to terminate instance, or any other input to run as a command\n")
+            if response.lower() in ["", "x"]:
+                stdin, stdout, stderr = self.ssh.exec_command(cmd)
+                done = True
+            elif response.lower() == "s":
+                break
+            elif response.lower() == "t":
+                self.shutdown()
+                raise OasisAlpacaError("Forced shutdown")
+            else:
+                # A command of the user's own gets a pty, as tools reporting progress or
+                # colour check for a terminal and behave differently without one. A command
+                # that waits for input still hangs, as nothing reaches its stdin.
+                stdin, stdout, stderr = self.ssh.exec_command(response, get_pty=True)
+            self._ssh_logs_important(stdout, stderr)

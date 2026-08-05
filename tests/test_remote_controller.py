@@ -207,6 +207,98 @@ def test_run_commands_condition():
     assert controller._ssh_logs_important.call_count == 2
 
 
+def _debug_controller(responses):
+    """Build a controller in debug mode whose prompt answers the given responses in order."""
+    controller = RemoteController(CONFIG_PATH)
+    controller.debug = True
+    controller.ssh = mock.Mock()
+    controller.ssh.exec_command.return_value = (1, 2, 3)
+    controller._ssh_logs_important = mock.Mock()
+    controller.shutdown = mock.Mock()
+    return controller, mock.patch("builtins.input", side_effect=responses)
+
+
+@pytest.mark.parametrize("response", ["", "x", "X"])
+def test_run_commands_debug_executes(response):
+    """Test that the debug prompt runs each command as it stands and streams its output."""
+    commands = ["command 1", "command 2"]
+    controller, prompt = _debug_controller([response] * len(commands))
+
+    with prompt:
+        controller.run_commands(commands)
+
+    commands_taken = [call[0][0] for call in controller.ssh.exec_command.call_args_list]
+    assert commands_taken == commands
+    assert controller._ssh_logs_important.call_count == 2
+
+
+def test_run_commands_debug_skips():
+    """Test that s skips the command and moves on to the next one."""
+    controller, prompt = _debug_controller(["s", ""])
+
+    with prompt:
+        controller.run_commands(["skipped command", "run command"])
+
+    commands_taken = [call[0][0] for call in controller.ssh.exec_command.call_args_list]
+    assert commands_taken == ["run command"]
+
+
+def test_run_commands_debug_runs_own_command_first():
+    """Test that any other response runs as a command, then the original is offered again."""
+    controller, prompt = _debug_controller(["ls -l", ""])
+
+    with prompt:
+        controller.run_commands(["original command"])
+
+    calls = controller.ssh.exec_command.call_args_list
+    assert [call[0][0] for call in calls] == ["ls -l", "original command"]
+    # A command of the user's own may expect a terminal, the ones Alpaca runs here do not.
+    assert calls[0][1] == {"get_pty": True}
+    assert calls[1][1] == {}
+
+
+def test_run_commands_debug_terminates():
+    """Test that t shuts the instance down and stops the run before any later command."""
+    controller, prompt = _debug_controller(["t"])
+
+    with prompt:
+        with pytest.raises(OasisAlpacaError):
+            controller.run_commands(["command 1", "command 2"])
+
+    controller.shutdown.assert_called_once()
+    controller.ssh.exec_command.assert_not_called()
+
+
+def test_debug_defaults_to_off():
+    """Test that a config without DEBUG runs normally rather than failing to build."""
+    controller = RemoteController(CONFIG_PATH)
+    assert controller.debug is False
+    assert "DEBUG" not in CONFIG
+
+
+@pytest.mark.parametrize("value,expected", [("True", True), ("true", True), (True, True), ("False", False), ("no", False)])
+def test_debug_config_values(tmp_path, value, expected):
+    """Test that DEBUG is read as True from a string or a JSON boolean, and is off otherwise."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({**CONFIG, "DEBUG": value}))
+
+    assert RemoteController(config_path).debug is expected
+
+
+def test_shutdown_only_terminates_once():
+    """Test that shutting down twice, as a forced shutdown does, terminates only once."""
+    controller = RemoteController(CONFIG_PATH)
+    controller.instance_id = "id"
+    controller.ec2 = mock.Mock()
+    controller.ec2.get_waiter.return_value = mock.Mock()
+    controller.ssh = mock.Mock()
+
+    controller.shutdown()
+    controller.shutdown()
+
+    controller.ec2.terminate_instances.assert_called_once_with(InstanceIds=["id"])
+
+
 def test_upload_model_github():
     repo_location = "http://github.com/place/repo"
     controller = RemoteController(CONFIG_PATH)
