@@ -1,6 +1,7 @@
 from alpaca.model.main import main as model_main
 from alpaca.pytest.main import main as pytest_main
 from alpaca.api.main import main as api_main
+from alpaca.benchmark.main import main as benchmark_main
 
 HELP_ARGS = {'h', '-h', 'help', '-help', '--help'}
 
@@ -27,3 +28,11 @@ def run_api(args):
         print("Usage: 'alpaca api <config.json>'")
     else:
         api_main(args[0])
+
+
+def run_benchmark(args):
+    """Validates a benchmark alpaca config with args[0] as config file."""
+    if len(args) == 0 or args[0] in HELP_ARGS:
+        print("Usage: 'alpaca benchmark <config.json>'")
+    else:
+        benchmark_main(args[0])

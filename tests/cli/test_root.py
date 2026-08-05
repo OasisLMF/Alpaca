@@ -78,3 +78,14 @@ def test_main_with_help(mock_argv, restore_commands, mocker):
     root.main()
 
     mock_config.assert_called_once_with([])
+
+
+def test_main_with_benchmark(mock_argv, restore_commands, mocker):
+    mock_benchmark = mocker.Mock()
+    assert "benchmark" in root.ALPACA_COMMANDS
+    root.ALPACA_COMMANDS["benchmark"] = mock_benchmark
+
+    mock_argv(["alpaca", "benchmark", "benchmark.json"])
+    root.main()
+
+    mock_benchmark.assert_called_once_with(["benchmark.json"])
