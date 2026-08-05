@@ -3,7 +3,7 @@ from unittest import mock
 
 
 def test_run_pytest_installs_before_running():
-    """Test that run_pytest_commands will install all modules before running pytest"""
+    """Test that run_pytest_commands will install all modules before running pytest."""
     commands = run_pytest_commands()
     installs = ["pip install pytest", "pip install hypothesis", "pip install mock", "pip install responses"]
 
@@ -20,7 +20,7 @@ def test_run_pytest_installs_before_running():
 
 
 def test_run_pytest_creates_log_directory_before_running():
-    """Test that run_pytest_commands will create pytest_logs directory before running"""
+    """Test that run_pytest_commands will create pytest_logs directory before running."""
     commands = run_pytest_commands()
 
     creates_log_dir = False
@@ -34,7 +34,7 @@ def test_run_pytest_creates_log_directory_before_running():
 
 
 def test_run_pytest_uses_custom_args():
-    """Test that run_pytest_commands includes custom pytest arguments"""
+    """Test that run_pytest_commands includes custom pytest arguments."""
     custom_args = "custom args"
     commands = run_pytest_commands(custom_args)
 
@@ -47,7 +47,7 @@ def test_run_pytest_uses_custom_args():
 
 
 def test_run_pytest_with_empty_args():
-    """Test that run_pytest_commands works with empty arguments"""
+    """Test that run_pytest_commands works with empty arguments."""
     commands = run_pytest_commands("")
 
     runs_pytest = False
@@ -60,7 +60,7 @@ def test_run_pytest_with_empty_args():
 
 @mock.patch("alpaca.pytest.scripts.get_timestamp")
 def test_run_pytest_saves_to_correct_location(mock_timestamp):
-    """Test that run_pytest_commands uses timestamp and location for log file name"""
+    """Test that run_pytest_commands uses timestamp and location for log file name."""
     mock_timestamp.return_value = "timestamp"
     commands = run_pytest_commands()
     logs_output = False

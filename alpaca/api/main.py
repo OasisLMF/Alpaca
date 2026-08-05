@@ -4,6 +4,14 @@ from alpaca.remote_controller import RemoteController
 
 
 def main(config_file):
+    """Run an Oasis API deployment on a new EC2 instance, then download the results.
+
+    Uploads the model, installs Docker, deploys the Oasis server, waits for it to come up
+    and runs the model through the API. The instance is terminated on the way out.
+
+    Args:
+        config_file: Path to the JSON configuration file for the API run.
+    """
     with RemoteController(config_file, REQUIRED_CONFIG_API, OPTIONAL_CONFIG_API) as controller:
         controller.upload_model(controller.config['REPO_LOCATION'])
         controller.run_commands(docker_install_commands())
@@ -14,7 +22,7 @@ def main(config_file):
 
 
 def log_condition(cmd):
-    """ Only uses flow logs for api run command """
+    """Only uses flow logs for api run command."""
     return cmd.startswith("oasislmf api")
 
 

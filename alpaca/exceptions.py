@@ -4,5 +4,5 @@ class OasisAlpacaConfigError(Exception):
 
 
 class OasisAlpacaError(Exception):
-    """Raised when an error occurs during alpaca runtime"""
+    """Raised when an error occurs during alpaca runtime."""
     pass

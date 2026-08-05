@@ -1,5 +1,6 @@
 from alpaca.scripts import (
     setup_python_commands,
+    oasislmf_install_commands,
     download_from_s3_commands,
     download_from_github_commands,
     upload_to_s3_commands,
@@ -9,7 +10,7 @@ from alpaca.scripts import (
 
 
 def test_setup_python_commands_uses_version():
-    """ Test that pip install uses version when given """
+    """Test that pip install uses version when given."""
     version = "2.3.4"
     commands = setup_python_commands(version)
     oasislmf_version_used = False
@@ -21,7 +22,7 @@ def test_setup_python_commands_uses_version():
 
 
 def test_setup_python_commands_no_version():
-    """ Test that pip install works fine without version """
+    """Test that pip install works fine without version."""
     commands = setup_python_commands()
     oasislmf_version_used = False
     for command in commands:
@@ -31,8 +32,70 @@ def test_setup_python_commands_no_version():
     assert oasislmf_version_used
 
 
+def test_setup_python_commands_ends_with_oasislmf_install():
+    """Test that the OasisLMF install is appended after the Python and AWS CLI setup."""
+    commands = setup_python_commands("2.3.4", "develop")
+    install_commands = oasislmf_install_commands("2.3.4", "develop")
+    assert commands[-len(install_commands):] == install_commands
+    assert "sudo apt-get update -y" == commands[0]
+
+
+def test_oasislmf_install_commands_uses_branch():
+    """Test that a branch is cloned and installed from source, with the tooling to build it."""
+    commands = oasislmf_install_commands(oasislmf_branch="develop")
+    assert commands == [
+        "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential python3-dev",
+        "sudo pip install --upgrade pip setuptools wheel -qq",
+        "git clone --depth 1 --branch develop https://github.com/OasisLMF/OasisLMF.git /tmp/oasislmf",
+        "sudo pip install '/tmp/oasislmf[extra]'",
+        "oasislmf version"
+    ]
+
+
+def test_oasislmf_install_commands_branch_keeps_build_output():
+    """Test that the source build is not quietened, as -qq hides why a build failed."""
+    commands = oasislmf_install_commands(oasislmf_branch="develop")
+    assert "sudo pip install '/tmp/oasislmf[extra]'" in commands
+    assert not any("[extra]" in command and "-qq" in command for command in commands)
+
+
+def test_oasislmf_install_commands_verify_install():
+    """Test that every install path ends by checking oasislmf is actually runnable."""
+    for kwargs in [{"oasislmf_branch": "develop"}, {"oasislmf_version": "2.3.4"}, {}]:
+        assert oasislmf_install_commands(**kwargs)[-1] == "oasislmf version"
+
+
+def test_oasislmf_install_commands_branch_takes_priority_over_version():
+    """Test that a branch wins when both a branch and a version are given."""
+    commands = oasislmf_install_commands("2.3.4", "feature/thing")
+    joined = " ".join(commands)
+    assert "--branch feature/thing https://github.com/OasisLMF/OasisLMF.git" in joined
+    assert "2.3.4" not in joined
+
+
+def test_oasislmf_install_commands_uses_version():
+    """Test that a version pins both the plain and the extra install."""
+    commands = oasislmf_install_commands("2.3.4")
+    assert commands == [
+        "sudo pip install oasislmf==2.3.4 -qq",
+        "sudo pip install 'oasislmf[extra]==2.3.4' -qq",
+        "oasislmf version"
+    ]
+
+
+def test_oasislmf_install_commands_latest():
+    """Test that no branch and no version installs the latest release."""
+    commands = oasislmf_install_commands()
+    assert commands == [
+        "sudo pip install oasislmf -qq",
+        "sudo pip install 'oasislmf[extra]' -qq",
+        "oasislmf version"
+    ]
+    assert not any("git" in command for command in commands)
+
+
 def test_download_from_s3_uses_aws_s3_cp():
-    """Test that download from S3 will use aws s3 cp"""
+    """Test that download from S3 will use aws s3 cp."""
     s3_link = "s3://my-bucket/my-folder"
     acommands = download_from_s3_commands(s3_link)
     uses_aws_s3 = False
@@ -44,7 +107,7 @@ def test_download_from_s3_uses_aws_s3_cp():
 
 
 def test_download_from_github_clones_repo_then_moves():
-    """Test that download from github will clone the repository and then moving it"""
+    """Test that download from github will clone the repository and then moving it."""
     github_link = "https://github.com/OasisLMF/PiWind"
     commands = download_from_github_commands(github_link)
 
@@ -58,7 +121,7 @@ def test_download_from_github_clones_repo_then_moves():
 
 
 def test_upload_to_s3_creates_bucket_if_needed():
-    """Test that upload to S3 will create bucket if it doesn't exist"""
+    """Test that upload to S3 will create bucket if it doesn't exist."""
     commands = upload_to_s3_commands("/local/path", "s3://my-bucket/folder")
 
     creates_bucket = False
@@ -70,7 +133,7 @@ def test_upload_to_s3_creates_bucket_if_needed():
 
 
 def test_upload_to_s3_checks_bucket_first():
-    """Test that upload to S3 will check if bucket exists before attempting to copy"""
+    """Test that upload to S3 will check if bucket exists before attempting to copy."""
     commands = upload_to_s3_commands("/local/path", "s3://test-bucket/path")
     unused_commands = ["aws s3 ls", "aws s3 cp --recursive /local/path s3://test-bucket/path"]
     for command in commands:
@@ -82,7 +145,7 @@ def test_upload_to_s3_checks_bucket_first():
 
 
 def test_download_only_important_excludes_fifo():
-    """Test that download only important will exclude and include relevant directories"""
+    """Test that download only important will exclude and include relevant directories."""
     command = download_only_important_command("/from/path", "/to/path")
     assert "aws s3 cp --recursive /from/path /to/path" in command
     assert "--exclude '*/fifo/*'" in command
@@ -94,7 +157,7 @@ def test_download_only_important_excludes_fifo():
 
 
 def test_model_requirements_checks_requirements():
-    """Test that model requirements will check for requirements and install them"""
+    """Test that model requirements will check for requirements and install them."""
     commands = model_requirements_commands()
     command = commands[0]
     assert "if [ -f requirements.txt ]; then   python -m pip install -r requirements.txt" in command

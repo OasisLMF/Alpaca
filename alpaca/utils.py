@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_timestamp():
-    """Generates a timestamp string
+    """Generates a timestamp string.
 
     Returns:
         str: Timestamp in YYYYMMDDHHMM format (e.g., '202512251230' for
@@ -35,7 +35,7 @@ def remove_start(line):
 
 
 def _download_results(sftp, results_dir_path_remote, results_dir_path_local):
-    """Recursively download results via SFTP
+    """Recursively download results via SFTP.
 
     Filtering rules:
         - Skipped entirely: 'fifo', 'static', 'work' directories

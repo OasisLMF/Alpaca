@@ -26,6 +26,8 @@ class RemoteController:
 
     Attributes:
         config (dict): Configuration dictionary loaded from JSON file and environment.
+        session (boto3.Session): Session all AWS clients are created from, bound to the
+            configured region and (optional) AWS_PROFILE.
         ec2 (boto3.client): AWS EC2 client for instance management.
         ssh (paramiko.SSHClient): SSH client for remote command execution, tunnelled over an
             SSM session using an ephemeral keypair (no static key ever touches disk).
@@ -55,6 +57,7 @@ class RemoteController:
                 the config file and environment variables.
         """
         self.config = self._create_config(config_file, required_config, optional_config)
+        self.session = None
         self.ec2 = None
         self.ssh = None
         self.instance_id = None
@@ -106,12 +109,15 @@ class RemoteController:
             OasisAlpacaError: If any step in the setup process fails.
         """
         try:
-            self.ec2 = boto3.client("ec2", region_name=self.config.get("AWS_REGION", 'eu-west-1'))
+            self.ec2 = self._aws_client("ec2")
             self.instance_id = self._create_instance()
             self.public_ip = self._wait_for_instance()
             self._wait_for_ssm_registration()
             self.ssh = self._wait_for_ssh()
-            self.run_commands(setup_python_commands(self.config.get('OASISLMF_VERSION', None)))
+            self.run_commands(setup_python_commands(
+                self.config.get('OASISLMF_VERSION', None),
+                self.config.get('OASISLMF_BRANCH', None)
+            ), check=True)
         except KeyboardInterrupt:
             # Ctrl c here will skip shutdown as it is differently cased to exception
             self.shutdown()
@@ -135,7 +141,7 @@ class RemoteController:
 
         logger.info("Instance terminated.")
 
-    def run_commands(self, commands, log_condition=None):
+    def run_commands(self, commands, log_condition=None, check=False):
         """Execute shell commands on the remote EC2 instance via SSH.
 
         Args:
@@ -144,6 +150,12 @@ class RemoteController:
                 a command's output should be streamed in real-time (True) or
                 logged only at debug level after completion (False).
                 Defaults to logging all commands at debug level.
+            check: Stop at the first command that exits non-zero and raise, including
+                its output in the error. Off by default, so a failing command is only
+                logged and the remaining commands still run.
+
+        Raises:
+            OasisAlpacaError: If check is set and a command exits non-zero.
         """
         log_condition = log_condition or (lambda cmd: False)
         for cmd in commands:
@@ -152,9 +164,14 @@ class RemoteController:
             stdin, stdout, stderr = self.ssh.exec_command(cmd, get_pty=needs_logs)
 
             if needs_logs:
-                self._ssh_logs_important(stdout, stderr)
+                output = self._ssh_logs_important(stdout, stderr)
             else:
-                self._ssh_logs_unimportant(stdout, stderr)
+                output = self._ssh_logs_unimportant(stdout, stderr)
+
+            if check:
+                exit_status = stdout.channel.recv_exit_status()
+                if exit_status != 0:
+                    raise OasisAlpacaError(f"Command failed with exit status {exit_status}: {cmd}\n{output}")
 
     def upload_model(self, repo_location):
         """Download and set up an OasisLMF model on the EC2 instance.
@@ -224,6 +241,27 @@ class RemoteController:
                 config[key] = os.environ[f"ALPACA_{key}"]
         return config
 
+    def _aws_client(self, service):
+        """Create a boto3 client for the given service from the controller's session.
+
+        Every AWS call is made through a single session so that boto3 and the SSM tunnel
+        built by _ssm_proxy_command always resolve the same credentials. Creating clients
+        with boto3.client directly would leave AWS_PROFILE applying only to the tunnel,
+        so the instance would be created and polled under the default profile.
+
+        Args:
+            service: Name of the AWS service to create a client for, e.g. 'ec2'.
+
+        Returns:
+            botocore.client.BaseClient: Client bound to the configured region and profile.
+        """
+        if self.session is None:
+            self.session = boto3.Session(
+                profile_name=self.config.get("AWS_PROFILE") or None,
+                region_name=self.config.get("AWS_REGION", 'eu-west-1')
+            )
+        return self.session.client(service)
+
     def _create_instance(self):
         """Launch a new EC2 instance with the configured settings.
 
@@ -262,9 +300,10 @@ class RemoteController:
                     }
                 }
             ],
+            "IamInstanceProfile": {
+                'Name': self.config["IAM_INSTANCE_PROFILE"]
+            }
         }
-        if "IAM_INSTANCE_PROFILE" in self.config:
-            ec2_kwargs["IamInstanceProfile"] = {'Name': self.config["IAM_INSTANCE_PROFILE"]}
 
         resp = self.ec2.run_instances(**ec2_kwargs)
 
@@ -284,10 +323,13 @@ class RemoteController:
 
         desc = self.ec2.describe_instances(InstanceIds=[self.instance_id])
         instance = desc["Reservations"][0]["Instances"][0]
-        public_ip = instance["PublicIpAddress"]
+        public_ip = instance.get("PublicIpAddress")
         self.availability_zone = instance["Placement"]["AvailabilityZone"]
 
-        logger.info(f"Instance public IP: {public_ip}")
+        if public_ip:
+            logger.info(f"Instance public IP: {public_ip}")
+        else:
+            logger.info("No public IP")
         return public_ip
 
     def _wait_for_ssm_registration(self):
@@ -302,7 +344,7 @@ class RemoteController:
                 attempts (default: 60 retries = 3 minutes).
         """
         logger.info("Waiting for SSM Agent to register")
-        ssm = boto3.client("ssm", region_name=self.config.get("AWS_REGION", 'eu-west-1'))
+        ssm = self._aws_client("ssm")
 
         max_retries = int(self.config.get("SSH_MAX_RETRIES", 60))
         retry_count = 0
@@ -334,7 +376,7 @@ class RemoteController:
                 (default: 60 retries = 3 minutes).
         """
         logger.info("Waiting for SSH over SSM")
-        instance_connect = boto3.client("ec2-instance-connect", region_name=self.config.get("AWS_REGION", 'eu-west-1'))
+        instance_connect = self._aws_client("ec2-instance-connect")
         key = paramiko.RSAKey.generate(2048)
         public_key = f"{key.get_name()} {key.get_base64()}"
 
@@ -354,15 +396,17 @@ class RemoteController:
                 proxy = paramiko.ProxyCommand(self._ssm_proxy_command())
                 ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(self.instance_id, username="ubuntu", pkey=key, sock=proxy, timeout=5)
+                ssh.connect(self.instance_id, username="ubuntu", pkey=key, sock=proxy, timeout=15)
                 return ssh
             except Exception as e:
                 # Tear down a failed attempt's SSM session/subprocess before retrying, otherwise
                 # every retry leaks a background Transport thread and an "aws ssm start-session" process.
-                if ssh is not None:
-                    ssh.close()
-                elif proxy is not None:
-                    proxy.close()
+                for closeable in (ssh, proxy):
+                    if closeable is not None:
+                        try:
+                            closeable.close()
+                        except Exception:
+                            logger.debug("Ignoring error while tearing down failed SSH attempt", exc_info=True)
                 retry_count += 1
                 if retry_count >= max_retries:
                     raise OasisAlpacaError(f"Failed to establish SSH-over-SSM connection after {max_retries} attempts: {e}")
@@ -390,9 +434,13 @@ class RemoteController:
         Args:
             stdout: Paramiko ChannelFile for standard output.
             stderr: Paramiko ChannelFile for standard error (combined with stdout).
+
+        Returns:
+            str: The streamed output, for reporting alongside a non-zero exit status.
         """
         stdout.channel.set_combine_stderr(True)
         decoder = codecs.getincrementaldecoder("utf-8")()
+        lines = []
         while not stdout.channel.exit_status_ready() or stdout.channel.recv_ready():
             if stdout.channel.recv_ready():
                 chunk = stdout.channel.recv(4096)
@@ -401,8 +449,10 @@ class RemoteController:
                     line = remove_start(line)
                     if line:
                         logger.info(line)
+                        lines.append(line)
             else:
                 time.sleep(1)
+        return "\n".join(lines)
 
     def _ssh_logs_unimportant(self, stdout, stderr):
         """Log command output after completion. Non-error output is only logged at the debug level.
@@ -410,6 +460,10 @@ class RemoteController:
         Args:
             stdout: Paramiko ChannelFile for standard output.
             stderr: Paramiko ChannelFile for standard error.
+
+        Returns:
+            str: The command output, for reporting alongside a non-zero exit status. Both
+                streams are included, as tools such as pip report failures on stdout.
         """
         out = stdout.read().decode("utf-8").strip()
         err = stderr.read().decode("utf-8").strip()
@@ -417,3 +471,4 @@ class RemoteController:
             logger.debug(out)
         if err:
             logger.warning(err)
+        return "\n".join(stream for stream in (out, err) if stream)

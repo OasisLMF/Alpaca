@@ -1,5 +1,5 @@
 def api_run_commands(path_to_oasislmf_json):
-    """Generate commands for an oasislmf api run
+    """Generate commands for an oasislmf api run.
 
     Args:
         path_to_oasislmf_json: Path to the OasisLMF configuration file
@@ -39,7 +39,7 @@ def deploy_oasis_server_commands(path_to_docker_compose):
 
 
 def wait_for_oasis_server_commands():
-    """Generate commands to wait for the Oasis API server to become healthy. Waits 315 seconds (5 second wait doubling until 160 seconds maximum)
+    """Generate commands to wait for the Oasis API server to become healthy. Waits 315 seconds (5 second wait doubling until 160 seconds maximum).
 
     Returns:
         list[str]: Shell commands to execute (single polling command).
@@ -58,6 +58,7 @@ def wait_for_oasis_server_commands():
 
 def docker_install_commands():
     """Generate commands to install, enable and start Docker Engine on Ubuntu.
+
     Returns:
         list[str]: Shell commands to execute in sequence.
     """

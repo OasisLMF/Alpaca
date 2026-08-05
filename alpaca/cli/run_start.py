@@ -6,7 +6,7 @@ HELP_ARGS = {'h', '-h', 'help', '-help', '--help'}
 
 
 def run_model(args):
-    """ Starts model alpaca instance with args[0] as config file """
+    """Starts model alpaca instance with args[0] as config file."""
     if len(args) == 0 or args[0] in HELP_ARGS:
         print("Usage: 'alpaca model <config.json>'")
     else:
@@ -14,7 +14,7 @@ def run_model(args):
 
 
 def run_pytest(args):
-    """ Starts pytest alpaca instance with args[0] as config file """
+    """Starts pytest alpaca instance with args[0] as config file."""
     if len(args) == 0 or args[0] in HELP_ARGS:
         print("Usage: 'alpaca pytest <config.json>'")
     else:
@@ -22,7 +22,7 @@ def run_pytest(args):
 
 
 def run_api(args):
-    """ Starts api alpaca instance with args[0] as config file """
+    """Starts api alpaca instance with args[0] as config file."""
     if len(args) == 0 or args[0] in HELP_ARGS:
         print("Usage: 'alpaca api <config.json>'")
     else:

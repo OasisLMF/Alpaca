@@ -7,7 +7,7 @@ from alpaca.api.scripts import (
 
 
 def test_api_run_commands_runs_oasislmf_api():
-    """Test that api_run_commands will execute oasislmf api run with localhost and config path"""
+    """Test that api_run_commands will execute oasislmf api run with localhost and config path."""
     config_path = "/path/to/config.json"
     commands = api_run_commands(config_path)
 
@@ -20,7 +20,7 @@ def test_api_run_commands_runs_oasislmf_api():
 
 
 def test_api_run_commands_creates_output_directory_moves_results():
-    """Test that api_run_commands will create a runs directory and move the run in the correct order"""
+    """Test that api_run_commands will create a runs directory and move the run in the correct order."""
     commands = api_run_commands("/config.json")
     missing_commands = ["oasislmf api run", "mkdir -p ./runs", "mv ./analysis_1_output.tar.gz ./runs/analysis_1_output.tar.gz"]
     for command in commands:
@@ -32,7 +32,7 @@ def test_api_run_commands_creates_output_directory_moves_results():
 
 
 def test_deploy_with_bash_script():
-    """Test that deploying a .sh file will make it executable and then execute it"""
+    """Test that deploying a .sh file will make it executable and then execute it."""
     commands = deploy_oasis_server_commands("./setup.sh")
 
     missing_commands = ["chmod +x ./setup.sh", "bash -e ./setup.sh"]
@@ -45,7 +45,7 @@ def test_deploy_with_bash_script():
 
 
 def test_deploy_with_yml():
-    """Test that deploying a .yml file will use docker compose"""
+    """Test that deploying a .yml file will use docker compose."""
     commands = deploy_oasis_server_commands("./docker-compose.yml")
 
     for command in commands:
@@ -56,21 +56,21 @@ def test_deploy_with_yml():
 
 
 def test_deploy_with_yml_doesnt_use_bash():
-    """Test that deploy commands do not use bash when given a yml file"""
+    """Test that deploy commands do not use bash when given a yml file."""
     commands = deploy_oasis_server_commands("./docker-compose.yml")
     for command in commands:
         assert "bash" not in command
 
 
 def test_deploy_with_bash_doesnt_use_docker():
-    """Test that deploy when used with a bash script will not use docker"""
+    """Test that deploy when used with a bash script will not use docker."""
     commands = deploy_oasis_server_commands("./script.sh")
     for command in commands:
         assert "docker" not in command
 
 
 def test_wait_for_server_checks_healthcheck():
-    """Test that wait command will check the healthcheck endpoint"""
+    """Test that wait command will check the healthcheck endpoint."""
     commands = wait_for_oasis_server_commands()
 
     checks_healthcheck = False
@@ -82,7 +82,7 @@ def test_wait_for_server_checks_healthcheck():
 
 
 def test_docker_install_installs_docker():
-    """Test that docker install will install docker packages and does the commands in order"""
+    """Test that docker install will install docker packages and does the commands in order."""
     commands = docker_install_commands()
 
     unused_commands = [
