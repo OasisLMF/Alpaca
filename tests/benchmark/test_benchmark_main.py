@@ -52,3 +52,53 @@ def test_main_raises_on_generic_config_missing_benchmark_keys():
     """The shared tests/config.json fixture has no benchmark-specific keys, so it should fail."""
     with pytest.raises(OasisAlpacaConfigError):
         main(CONFIG_PATH)
+
+
+def test_main_prints_benchmark_plan(tmp_path, capsys):
+    """Test that main prints the benchmark plan in the documented format."""
+    config_path = tmp_path / "benchmark.json"
+    config_path.write_text(json.dumps({
+        "AMI_ID": "id",
+        "SECURITY_GROUP_ID": "group id",
+        "SUBNET_ID": "mr subnet",
+        "IAM_INSTANCE_PROFILE": "profile",
+        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
+        "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
+        "OASISLMF_VERSION": "2.4.9",
+        "OASISLMF_VERSION_COMPARISON": "2.3.3",
+    }))
+
+    main(config_path)
+
+    assert capsys.readouterr().out == (
+        "Benchmark configuration loaded\n"
+        "\n"
+        "Models:\n"
+        "- PiWind\n"
+        "\n"
+        "Comparison:\n"
+        "- OasisLMF 2.4.9\n"
+        "- OasisLMF 2.3.3\n"
+        "\n"
+        "Execution mode:\n"
+        "parallel\n"
+    )
+
+
+def test_main_raises_on_invalid_execution_mode(tmp_path):
+    """Test that an EXECUTION_MODE outside 'parallel'/'sequential' is rejected."""
+    config_path = tmp_path / "benchmark.json"
+    config_path.write_text(json.dumps({
+        "AMI_ID": "id",
+        "SECURITY_GROUP_ID": "group id",
+        "SUBNET_ID": "mr subnet",
+        "IAM_INSTANCE_PROFILE": "profile",
+        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
+        "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
+        "EXECUTION_MODE": "sideways",
+    }))
+
+    with pytest.raises(OasisAlpacaConfigError):
+        main(config_path)
