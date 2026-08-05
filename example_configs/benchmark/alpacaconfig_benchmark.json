@@ -9,6 +9,7 @@
     "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
     "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
     "OASISLMF_VERSION": "2.4.9",
-    "OASISLMF_VERSION_COMPARISON": "2.4.9",
+    "OASISLMF_VERSION_COMPARISON": "2.3.3",
+    "EXECUTION_MODE": "parallel",
     "AWS_PROFILE": "oasis"
 }

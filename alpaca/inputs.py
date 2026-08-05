@@ -5,6 +5,8 @@ AWS_REGION = ("AWS_REGION", "region of EC2 instance to create", "eu-west-1")
 DEBUG = ("DEBUG", "Run using debug mode (must be True to enable)", "False")
 DISK_GB = ("DISK_GB", "How many GB your EC2 needs to store your data", "50")
 EC2_NAME = ("EC2_NAME", "Name of EC2 Instance", "Alpaca")
+EXECUTION_MODE = ("EXECUTION_MODE", "How to run a benchmark's comparison models relative to each other: 'parallel' or 'sequential'",
+                  "parallel")
 IAM_INSTANCE_PROFILE = (
     "IAM_INSTANCE_PROFILE",
     "Instance profile used to allow S3 access and SSM connectivity (must include SSM Agent permissions, "
