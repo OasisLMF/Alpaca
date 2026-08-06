@@ -1,4 +1,6 @@
-from alpaca.benchmark.scripts import model_name_from_location, build_benchmark_plan, build_execution_plan, format_benchmark_plan
+from alpaca.benchmark.scripts import (
+    model_name_from_location, build_benchmark_plan, build_execution_plan, build_model_run_configs, format_benchmark_plan
+)
 from alpaca.exceptions import OasisAlpacaConfigError
 
 import pytest
@@ -84,6 +86,76 @@ def test_build_execution_plan_defaults_missing_versions_to_latest():
         "baseline": {"version": "latest"},
         "comparison": {"version": "latest"},
     }
+
+
+BASE_BENCHMARK_CONFIG = {
+    "AMI_ID": "ami-1",
+    "SECURITY_GROUP_ID": "sg-1",
+    "SUBNET_ID": "subnet-1",
+    "IAM_INSTANCE_PROFILE": "profile",
+    "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
+    "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+    "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
+    "OASISLMF_VERSION": "2.3.3",
+    "OASISLMF_VERSION_COMPARISON": "2.4.9",
+}
+
+
+def test_build_model_run_configs_returns_baseline_then_comparison():
+    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
+
+    assert [entry["label"] for entry in run_configs] == ["baseline", "comparison"]
+    assert [entry["model"] for entry in run_configs] == ["PiWind", "PiWind"]
+    assert [entry["version"] for entry in run_configs] == ["2.3.3", "2.4.9"]
+
+
+def test_build_model_run_configs_sets_distinct_version_per_target():
+    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
+
+    baseline, comparison = run_configs
+    assert baseline["run_config"]["OASISLMF_VERSION"] == "2.3.3"
+    assert comparison["run_config"]["OASISLMF_VERSION"] == "2.4.9"
+
+
+def test_build_model_run_configs_carries_over_shared_keys():
+    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
+
+    for entry in run_configs:
+        run_config = entry["run_config"]
+        assert run_config["AMI_ID"] == "ami-1"
+        assert run_config["SECURITY_GROUP_ID"] == "sg-1"
+        assert run_config["SUBNET_ID"] == "subnet-1"
+        assert run_config["IAM_INSTANCE_PROFILE"] == "profile"
+        assert run_config["PATH_TO_OASISLMF_JSON"] == "./oasislmf.json"
+
+
+def test_build_model_run_configs_uses_separate_result_directories():
+    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
+
+    baseline, comparison = run_configs
+    assert baseline["run_config"]["RESULT_DIRECTORY"] == "./runs/baseline"
+    assert comparison["run_config"]["RESULT_DIRECTORY"] == "./runs/comparison"
+    assert baseline["run_config"]["RESULT_DIRECTORY"] != comparison["run_config"]["RESULT_DIRECTORY"]
+
+
+def test_build_model_run_configs_respects_configured_result_directory():
+    config = {**BASE_BENCHMARK_CONFIG, "RESULT_DIRECTORY": "s3://bucket/results"}
+    run_configs = build_model_run_configs(config)
+
+    baseline, comparison = run_configs
+    assert baseline["run_config"]["RESULT_DIRECTORY"] == "s3://bucket/results/baseline"
+    assert comparison["run_config"]["RESULT_DIRECTORY"] == "s3://bucket/results/comparison"
+
+
+def test_build_model_run_configs_omits_version_when_unset():
+    config = {key: value for key, value in BASE_BENCHMARK_CONFIG.items() if not key.startswith("OASISLMF_VERSION")}
+    run_configs = build_model_run_configs(config)
+
+    baseline, comparison = run_configs
+    assert "OASISLMF_VERSION" not in baseline["run_config"]
+    assert "OASISLMF_VERSION" not in comparison["run_config"]
+    assert baseline["version"] == "latest"
+    assert comparison["version"] == "latest"
 
 
 def test_format_benchmark_plan_matches_documented_layout():

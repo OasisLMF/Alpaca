@@ -352,6 +352,24 @@ def test__create_config_returns_config():
     assert config == CONFIG
 
 
+def test__create_config_accepts_dict():
+    """Test that an already-loaded config dict can be used in place of a file path,
+    so a config built in memory for a single run doesn't need to be written to disk first.
+    """
+    controller = RemoteController(CONFIG_PATH)
+    config = controller._create_config({"AMI_ID": "explicit"}, [], [])
+    assert config == {"AMI_ID": "explicit"}
+
+
+def test__create_config_dict_is_not_mutated():
+    """Test that passing a dict doesn't let later config resolution mutate the caller's copy."""
+    controller = RemoteController(CONFIG_PATH)
+    original = {"SUBNET_ID": "mr subnet"}
+    config = controller._create_config(original, [], [("EC2_NAME", "", "")])
+    config["EC2_NAME"] = "added"
+    assert "EC2_NAME" not in original
+
+
 @mock.patch("alpaca.remote_controller.os")
 def test__create_config_uses_environment(mock_os):
     mock_os.environ = {

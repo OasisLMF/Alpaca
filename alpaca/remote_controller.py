@@ -50,7 +50,8 @@ class RemoteController:
         """Initialize the RemoteController with configuration.
 
         Args:
-            config_file: Path to JSON configuration file containing AWS and run settings.
+            config_file: Path to a JSON configuration file containing AWS and run settings,
+                or an already-loaded config dict.
             required_config: List of tuples (key, description, default) for required config keys.
                 If a required key is missing from the config file, it will be read from
                 the environment variable ALPACA_{key}. Raises error if still not found.
@@ -235,11 +236,12 @@ class RemoteController:
         logger.info("Download complete")
 
     def _create_config(self, config_file, required_config, optional_config):
-        """Load and validate configuration from JSON file and environment variables.
-        JSON config always takes priority.
+        """Load and validate configuration from a JSON file or dict, plus environment variables.
+        JSON config (or the given dict) always takes priority.
 
         Args:
-            config_file: Path to the JSON configuration file.
+            config_file: Path to a JSON configuration file, or an already-loaded config dict
+                (e.g. one built in memory for a single run rather than saved to disk).
             required_config: List of (key, description, default) tuples for required keys.
             optional_config: List of (key, description, default) tuples for optional keys.
 
@@ -249,8 +251,11 @@ class RemoteController:
         Raises:
             OasisAlpacaConfigError: If a required key is missing from both file and environment.
         """
-        with open(config_file, 'r') as f:
-            config = json.load(f)
+        if isinstance(config_file, dict):
+            config = dict(config_file)
+        else:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
         for (key, _, _) in required_config:
             if key not in config:
                 if f"ALPACA_{key}" in os.environ:
