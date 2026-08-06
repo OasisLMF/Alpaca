@@ -80,6 +80,52 @@ def build_execution_plan(config):
     }
 
 
+SHARED_MODEL_CONFIG_KEYS = [
+    "AMI_ID", "SECURITY_GROUP_ID", "SUBNET_ID", "IAM_INSTANCE_PROFILE", "PATH_TO_OASISLMF_JSON",
+    "AWS_REGION", "OASISLMF_BRANCH", "INSTANCE_TYPE", "DISK_GB", "LOG_LEVEL", "EC2_NAME",
+    "MAX_LIFETIME_HOURS", "SSH_MAX_RETRIES", "AWS_PROFILE", "DEBUG"
+]
+
+
+def build_model_run_configs(config):
+    """Build a per-target model-run config for each side of a benchmark.
+
+    Each target reuses every shared EC2/OasisLMF setting from the benchmark config, but
+    gets its own REPO_LOCATION, OASISLMF_VERSION and RESULT_DIRECTORY, since the two runs
+    execute as ordinary, independent 'alpaca model' runs (which may happen concurrently)
+    and must not race on the same instance settings or output directory.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Returns:
+        list[dict]: Two entries, in baseline-then-comparison order, each with keys 'label'
+            ('baseline' or 'comparison'), 'model' (short model name, see
+            model_name_from_location), 'version' (the pinned version, or 'latest' when
+            unset) and 'run_config' (a config dict suitable for alpaca.model.main.main).
+    """
+    targets = [
+        ("baseline", config["REPO_LOCATION"], config.get("OASISLMF_VERSION")),
+        ("comparison", config["REPO_LOCATION_COMPARISON"], config.get("OASISLMF_VERSION_COMPARISON")),
+    ]
+    result_directory = config.get("RESULT_DIRECTORY", "./runs").rstrip("/")
+
+    run_configs = []
+    for label, repo_location, version in targets:
+        run_config = {key: config[key] for key in SHARED_MODEL_CONFIG_KEYS if key in config}
+        run_config["REPO_LOCATION"] = repo_location
+        run_config["RESULT_DIRECTORY"] = f"{result_directory}/{label}"
+        if version:
+            run_config["OASISLMF_VERSION"] = version
+        run_configs.append({
+            "label": label,
+            "model": model_name_from_location(repo_location),
+            "version": version or "latest",
+            "run_config": run_config,
+        })
+    return run_configs
+
+
 def format_benchmark_plan(plan):
     """Format a benchmark plan for display.
 
