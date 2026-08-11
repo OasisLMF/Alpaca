@@ -23,6 +23,9 @@ def _write_config(tmp_path, overrides=None):
         "OASISLMF_VERSION": "2.3.3",
         "OASISLMF_VERSION_COMPARISON": "2.4.9",
         "EXECUTION_MODE": "sequential",
+        # Default RESULT_DIRECTORY into tmp_path so main()'s report-writing step never
+        # touches the real working directory during a test.
+        "RESULT_DIRECTORY": str(tmp_path / "runs"),
         **(overrides or {}),
     }
     config_path = tmp_path / "benchmark.json"
@@ -48,8 +51,14 @@ def test_main_returns_structured_results_for_both_targets(mock_model_main, mock_
 
     assert mock_model_main.call_count == 2
     assert sorted(output["results"], key=lambda r: r["version"]) == [
-        {"model": "PiWind", "version": "2.3.3", "status": "success", "runtime_seconds": mock.ANY},
-        {"model": "PiWind", "version": "2.4.9", "status": "success", "runtime_seconds": mock.ANY},
+        {
+            "model": "PiWind", "version": "2.3.3", "status": "success",
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+        },
+        {
+            "model": "PiWind", "version": "2.4.9", "status": "success",
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+        },
     ]
 
 
@@ -226,3 +235,62 @@ def test_main_raises_on_invalid_execution_mode(tmp_path):
 
     with pytest.raises(OasisAlpacaConfigError):
         main(config_path)
+
+
+@mock.patch("alpaca.benchmark.main.build_comparison_report")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_writes_report_file_alongside_result_directories(mock_model_main, mock_build_comparison, tmp_path):
+    """Test that main saves the printed report to a file next to the targets' results,
+    so it's still available for review after the terminal output has scrolled away.
+    """
+    mock_build_comparison.return_value = {"status": "pass", "different_files": []}
+    results_dir = tmp_path / "results"
+    config_path = _write_config(tmp_path, {"RESULT_DIRECTORY": str(results_dir)})
+
+    output = main(config_path)
+
+    report_path = output["report_path"]
+    assert report_path == results_dir / "benchmark_report.txt"
+    assert "Benchmark Report" in report_path.read_text()
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_report_includes_timing_comparison_when_both_targets_succeed(mock_model_main, tmp_path, capsys):
+    """Test that the report includes a step-by-step timing table sourced from each
+    target's result.txt, not just the pass/fail output comparison.
+    """
+    results_dir = tmp_path / "results"
+
+    def make_result_file(target, seconds):
+        result_file = results_dir / target / "losses-x" / "runs" / "result.txt"
+        result_file.parent.mkdir(parents=True)
+        result_file.write_text(f"COMPLETED: oasislmf.manager.interface in {seconds}s\n")
+        _write_output_files(results_dir / target, {"summary.csv": "a,b\n1,2\n"})
+
+    make_result_file("baseline", "210.50")
+    make_result_file("comparison", "165.75")
+    config_path = _write_config(tmp_path, {"RESULT_DIRECTORY": str(results_dir)})
+
+    output = main(config_path)
+
+    report_text = output["report_path"].read_text()
+    assert "Timing comparison (2.3.3 vs 2.4.9):" in report_text
+    assert "oasislmf.manager.interface" in report_text
+    assert "210.50" in report_text
+    assert "165.75" in report_text
+    assert capsys.readouterr().out.count("Timing comparison") == 1
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_report_notes_comparison_skipped_when_a_target_failed(mock_model_main, tmp_path):
+    """Test that the saved report explains why comparison/timing sections are absent,
+    rather than silently omitting them.
+    """
+    mock_model_main.side_effect = [None, RuntimeError("boom")]
+    config_path = _write_config(tmp_path)
+
+    output = main(config_path)
+
+    report_text = output["report_path"].read_text()
+    assert "Output comparison skipped" in report_text
+    assert "Timing comparison" not in report_text
