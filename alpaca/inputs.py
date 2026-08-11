@@ -2,6 +2,12 @@
 AMI_ID = ("AMI_ID", "Amazon Machine ID", "ami-09079da11cd2861fa")
 AWS_PROFILE = ("AWS_PROFILE", "Named AWS CLI profile to use for AWS calls and the SSM session tunnel (optional)", "")
 AWS_REGION = ("AWS_REGION", "region of EC2 instance to create", "eu-west-1")
+COMPARISON_TOLERANCE = (
+    "COMPARISON_TOLERANCE",
+    "Relative tolerance for numeric differences when comparing benchmark run outputs (e.g. 1e-6), "
+    "since OasisLMF's Monte Carlo sampling means two runs rarely produce byte-identical loss tables",
+    "1e-6"
+)
 DEBUG = ("DEBUG", "Run using debug mode (must be True to enable)", "False")
 DISK_GB = ("DISK_GB", "How many GB your EC2 needs to store your data", "50")
 EC2_NAME = ("EC2_NAME", "Name of EC2 Instance", "Alpaca")

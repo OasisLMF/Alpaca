@@ -30,23 +30,34 @@ def _write_config(tmp_path, overrides=None):
     return config_path
 
 
+def _write_output_files(directory, files):
+    output_dir = Path(directory) / "output"
+    output_dir.mkdir(parents=True)
+    for name, content in files.items():
+        (output_dir / name).write_text(content)
+
+
+@mock.patch("alpaca.benchmark.main.build_comparison_report")
 @mock.patch("alpaca.benchmark.executor.model_main")
-def test_main_returns_structured_results_for_both_targets(mock_model_main, tmp_path):
+def test_main_returns_structured_results_for_both_targets(mock_model_main, mock_build_comparison, tmp_path):
     """Test that main runs both targets (reusing model_main) and returns their results."""
+    mock_build_comparison.return_value = {"status": "pass", "different_files": []}
     config_path = _write_config(tmp_path)
 
-    results = main(config_path)
+    output = main(config_path)
 
     assert mock_model_main.call_count == 2
-    assert sorted(results, key=lambda r: r["version"]) == [
+    assert sorted(output["results"], key=lambda r: r["version"]) == [
         {"model": "PiWind", "version": "2.3.3", "status": "success", "runtime_seconds": mock.ANY},
         {"model": "PiWind", "version": "2.4.9", "status": "success", "runtime_seconds": mock.ANY},
     ]
 
 
+@mock.patch("alpaca.benchmark.main.build_comparison_report")
 @mock.patch("alpaca.benchmark.executor.model_main")
-def test_main_passes_distinct_versions_to_each_target(mock_model_main, tmp_path):
+def test_main_passes_distinct_versions_to_each_target(mock_model_main, mock_build_comparison, tmp_path):
     """Test that the baseline and comparison targets each get their own OASISLMF_VERSION."""
+    mock_build_comparison.return_value = {"status": "pass", "different_files": []}
     config_path = _write_config(tmp_path)
 
     main(config_path)
@@ -61,10 +72,88 @@ def test_main_marks_target_failed_when_model_main_raises(mock_model_main, tmp_pa
     mock_model_main.side_effect = [None, RuntimeError("boom")]
     config_path = _write_config(tmp_path)
 
-    results = main(config_path)
+    output = main(config_path)
 
-    statuses = sorted(r["status"] for r in results)
+    statuses = sorted(r["status"] for r in output["results"])
     assert statuses == ["failed", "success"]
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_skips_comparison_when_a_target_failed(mock_model_main, tmp_path, caplog):
+    """Test that comparison is skipped, with a warning, if either target failed."""
+    mock_model_main.side_effect = [None, RuntimeError("boom")]
+    config_path = _write_config(tmp_path)
+
+    with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.main"):
+        output = main(config_path)
+
+    assert output["comparison"] is None
+    assert "Skipping result comparison" in caplog.text
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_reports_pass_when_outputs_identical(mock_model_main, tmp_path, capsys):
+    """Test that main compares both targets' output directories and reports a pass."""
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "baseline", {"summary.csv": "a,b\n1,2\n"})
+    _write_output_files(results_dir / "comparison", {"summary.csv": "a,b\n1,2\n"})
+    config_path = _write_config(tmp_path, {"RESULT_DIRECTORY": str(results_dir)})
+
+    output = main(config_path)
+
+    assert output["comparison"] == {"status": "pass", "different_files": []}
+    assert "PASS:\nOutputs identical" in capsys.readouterr().out
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_reports_fail_when_outputs_differ(mock_model_main, tmp_path, capsys):
+    """Test that main reports the differing file names when outputs don't match."""
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "baseline", {"summary.csv": "a,b\n1,2\n"})
+    _write_output_files(results_dir / "comparison", {"summary.csv": "a,b\n1,3\n"})
+    config_path = _write_config(tmp_path, {"RESULT_DIRECTORY": str(results_dir)})
+
+    output = main(config_path)
+
+    assert output["comparison"] == {"status": "fail", "different_files": ["summary.csv"]}
+    assert "FAIL:\nFiles different:\n- summary.csv" in capsys.readouterr().out
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_treats_tiny_numeric_differences_as_a_pass(mock_model_main, tmp_path, capsys):
+    """Two runs of the same model rarely produce byte-identical loss tables, so a tiny
+    numeric difference (well within the default tolerance) should still report a pass.
+    """
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "baseline", {"summary.csv": "a,b\n1,2.0000001\n"})
+    _write_output_files(results_dir / "comparison", {"summary.csv": "a,b\n1,2.0000002\n"})
+    config_path = _write_config(tmp_path, {"RESULT_DIRECTORY": str(results_dir)})
+
+    output = main(config_path)
+
+    assert output["comparison"] == {"status": "pass", "different_files": []}
+    assert "PASS:\nOutputs identical" in capsys.readouterr().out
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_respects_configured_comparison_tolerance(mock_model_main, tmp_path, capsys):
+    """Test that COMPARISON_TOLERANCE from the config reaches the comparison."""
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "baseline", {"summary.csv": "a,b\n1,2.0\n"})
+    _write_output_files(results_dir / "comparison", {"summary.csv": "a,b\n1,2.001\n"})
+    config_path = _write_config(tmp_path, {"RESULT_DIRECTORY": str(results_dir), "COMPARISON_TOLERANCE": "0.01"})
+
+    output = main(config_path)
+
+    assert output["comparison"] == {"status": "pass", "different_files": []}
+
+
+def test_main_raises_on_invalid_comparison_tolerance(tmp_path):
+    """Test that an invalid COMPARISON_TOLERANCE is rejected before any target runs."""
+    config_path = _write_config(tmp_path, {"COMPARISON_TOLERANCE": "not-a-number"})
+
+    with pytest.raises(OasisAlpacaConfigError):
+        main(config_path)
 
 
 def test_main_raises_on_missing_comparison_repo(tmp_path):
@@ -94,14 +183,16 @@ def test_main_raises_on_generic_config_missing_benchmark_keys():
         main(CONFIG_PATH)
 
 
+@mock.patch("alpaca.benchmark.main.build_comparison_report")
 @mock.patch("alpaca.benchmark.executor.model_main")
-def test_main_prints_benchmark_plan(mock_model_main, tmp_path, capsys):
+def test_main_prints_benchmark_plan(mock_model_main, mock_build_comparison, tmp_path, capsys):
     """Test that main prints the benchmark plan in the documented format."""
+    mock_build_comparison.return_value = {"status": "pass", "different_files": []}
     config_path = _write_config(tmp_path, {"EXECUTION_MODE": "parallel"})
 
     main(config_path)
 
-    assert capsys.readouterr().out == (
+    assert capsys.readouterr().out.startswith(
         "Benchmark configuration loaded\n"
         "\n"
         "Models:\n"
@@ -116,9 +207,11 @@ def test_main_prints_benchmark_plan(mock_model_main, tmp_path, capsys):
     )
 
 
+@mock.patch("alpaca.benchmark.main.build_comparison_report")
 @mock.patch("alpaca.benchmark.executor.model_main")
-def test_main_builds_and_logs_execution_plan(mock_model_main, tmp_path, caplog):
+def test_main_builds_and_logs_execution_plan(mock_model_main, mock_build_comparison, tmp_path, caplog):
     """Test that main builds the baseline/comparison execution plan and logs it."""
+    mock_build_comparison.return_value = {"status": "pass", "different_files": []}
     config_path = _write_config(tmp_path)
 
     with caplog.at_level(logging.DEBUG, logger="alpaca.benchmark.main"):
