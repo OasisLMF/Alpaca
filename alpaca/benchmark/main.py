@@ -3,7 +3,7 @@ from alpaca.benchmark.scripts import (
     build_benchmark_plan, build_execution_plan, build_model_run_configs, format_benchmark_plan
 )
 from alpaca.benchmark.executor import run_benchmark_targets
-from alpaca.benchmark.comparison import build_comparison_report, format_comparison_report
+from alpaca.benchmark.comparison import build_comparison_report, format_comparison_report, resolve_relative_tolerance
 from alpaca.config import load_config
 
 import logging
@@ -33,6 +33,7 @@ def main(config_file):
     print(format_benchmark_plan(plan))
     execution_plan = build_execution_plan(config)
     logger.debug(f"Benchmark execution plan: {execution_plan}")
+    relative_tolerance = resolve_relative_tolerance(config)
     run_configs = build_model_run_configs(config)
     results = run_benchmark_targets(run_configs, plan["execution_mode"])
 
@@ -40,7 +41,9 @@ def main(config_file):
     if all(result["status"] == "success" for result in results):
         baseline_config, comparison_config = run_configs
         comparison_report = build_comparison_report(
-            baseline_config["run_config"]["RESULT_DIRECTORY"], comparison_config["run_config"]["RESULT_DIRECTORY"]
+            baseline_config["run_config"]["RESULT_DIRECTORY"],
+            comparison_config["run_config"]["RESULT_DIRECTORY"],
+            relative_tolerance,
         )
         print(format_comparison_report(comparison_report))
     else:

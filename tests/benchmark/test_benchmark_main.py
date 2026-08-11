@@ -119,6 +119,43 @@ def test_main_reports_fail_when_outputs_differ(mock_model_main, tmp_path, capsys
     assert "FAIL:\nFiles different:\n- summary.csv" in capsys.readouterr().out
 
 
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_treats_tiny_numeric_differences_as_a_pass(mock_model_main, tmp_path, capsys):
+    """Two runs of the same model rarely produce byte-identical loss tables, so a tiny
+    numeric difference (well within the default tolerance) should still report a pass.
+    """
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "baseline", {"summary.csv": "a,b\n1,2.0000001\n"})
+    _write_output_files(results_dir / "comparison", {"summary.csv": "a,b\n1,2.0000002\n"})
+    config_path = _write_config(tmp_path, {"RESULT_DIRECTORY": str(results_dir)})
+
+    output = main(config_path)
+
+    assert output["comparison"] == {"status": "pass", "different_files": []}
+    assert "PASS:\nOutputs identical" in capsys.readouterr().out
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_respects_configured_comparison_tolerance(mock_model_main, tmp_path, capsys):
+    """Test that COMPARISON_TOLERANCE from the config reaches the comparison."""
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "baseline", {"summary.csv": "a,b\n1,2.0\n"})
+    _write_output_files(results_dir / "comparison", {"summary.csv": "a,b\n1,2.001\n"})
+    config_path = _write_config(tmp_path, {"RESULT_DIRECTORY": str(results_dir), "COMPARISON_TOLERANCE": "0.01"})
+
+    output = main(config_path)
+
+    assert output["comparison"] == {"status": "pass", "different_files": []}
+
+
+def test_main_raises_on_invalid_comparison_tolerance(tmp_path):
+    """Test that an invalid COMPARISON_TOLERANCE is rejected before any target runs."""
+    config_path = _write_config(tmp_path, {"COMPARISON_TOLERANCE": "not-a-number"})
+
+    with pytest.raises(OasisAlpacaConfigError):
+        main(config_path)
+
+
 def test_main_raises_on_missing_comparison_repo(tmp_path):
     """Test that a benchmark config missing REPO_LOCATION_COMPARISON is rejected."""
     config_path = tmp_path / "benchmark.json"
