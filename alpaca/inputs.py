@@ -17,7 +17,13 @@ COMPARISON_TOLERANCE = (
 )
 DEBUG = ("DEBUG", "Run using debug mode (must be True to enable)", "False")
 DISK_GB = ("DISK_GB", "How many GB your EC2 needs to store your data", "50")
-EC2_NAME = ("EC2_NAME", "Name of EC2 Instance", "Alpaca")
+EC2_NAME = (
+    "EC2_NAME",
+    "Name of EC2 Instance. In a benchmark run this is always overridden per target as "
+    "'Alpaca {model} {version}' (e.g. 'Alpaca PiWind 2.5.4'), so concurrent instances are "
+    "distinguishable in the AWS console",
+    "Alpaca"
+)
 EXECUTION_MODE = ("EXECUTION_MODE", "How to run a benchmark's comparison models relative to each other: 'parallel' or 'sequential'",
                   "parallel")
 IAM_INSTANCE_PROFILE = (

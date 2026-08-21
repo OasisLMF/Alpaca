@@ -158,6 +158,36 @@ def test_build_model_run_configs_uses_separate_result_directories():
     assert baseline["run_config"]["RESULT_DIRECTORY"] != comparison["run_config"]["RESULT_DIRECTORY"]
 
 
+def test_build_model_run_configs_names_ec2_instances_by_model_and_version():
+    """Test that each target's EC2_NAME identifies its model and version, so concurrent
+    instances are distinguishable in the AWS console."""
+    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
+
+    baseline, comparison = run_configs
+    assert baseline["run_config"]["EC2_NAME"] == "Alpaca PiWind 2.3.3"
+    assert comparison["run_config"]["EC2_NAME"] == "Alpaca PiWind 2.4.9"
+
+
+def test_build_model_run_configs_ec2_name_overrides_top_level_setting():
+    """Test that the derived per-target EC2_NAME takes priority over a top-level
+    EC2_NAME, since a single shared name would defeat the point of distinguishing
+    concurrent instances."""
+    config = {**BASE_BENCHMARK_CONFIG, "EC2_NAME": "MyCustomName"}
+    run_configs = build_model_run_configs(config)
+
+    for entry in run_configs:
+        assert entry["run_config"]["EC2_NAME"] != "MyCustomName"
+
+
+def test_build_model_run_configs_ec2_name_defaults_version_to_latest():
+    config = {key: value for key, value in BASE_BENCHMARK_CONFIG.items() if not key.startswith("OASISLMF_VERSION")}
+    run_configs = build_model_run_configs(config)
+
+    baseline, comparison = run_configs
+    assert baseline["run_config"]["EC2_NAME"] == "Alpaca PiWind latest"
+    assert comparison["run_config"]["EC2_NAME"] == "Alpaca PiWind latest"
+
+
 def test_build_model_run_configs_respects_configured_result_directory():
     config = {**BASE_BENCHMARK_CONFIG, "RESULT_DIRECTORY": "s3://bucket/results"}
     run_configs = build_model_run_configs(config)
