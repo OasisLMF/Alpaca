@@ -5,20 +5,25 @@ from pathlib import Path
 REPORT_FILENAME = "benchmark_report.txt"
 
 
-def build_report_text(results, comparison_report):
+def build_report_text(results, comparison_report, skip_reason="at least one target failed"):
     """Build a single, human-readable report combining both targets' timings and,
     where available, their output comparison.
 
     Args:
         results: list[dict] as returned by run_benchmark_targets, one entry per target,
             each with 'model', 'version', 'status', 'runtime_seconds' and 'step_timings'.
+            In single-run mode with an S3 baseline comparison, a second, synthetic entry
+            representing the stored baseline is appended so the timing table and summary
+            lines render exactly as they would for a live dual-target run.
         comparison_report: dict from build_comparison_report, or None if comparison was
-            skipped (e.g. because a target failed).
+            skipped.
+        skip_reason: Why comparison_report is None, e.g. "at least one target failed" or
+            "no baseline comparison configured". Ignored when comparison_report is set.
 
     Returns:
         str: The full report text: a run summary line per target, a step-by-step timing
             comparison table when both targets succeeded, and the output comparison
-            (or a note that it was skipped).
+            (or a note explaining why it was skipped).
     """
     lines = ["Benchmark Report", "=" * len("Benchmark Report"), "", "Runs:"]
     for result in results:
@@ -35,7 +40,7 @@ def build_report_text(results, comparison_report):
     if comparison_report is not None:
         lines.append(format_comparison_report(comparison_report))
     else:
-        lines.append("Output comparison skipped: at least one target failed.")
+        lines.append(f"Output comparison skipped: {skip_reason}.")
 
     return "\n".join(lines)
 

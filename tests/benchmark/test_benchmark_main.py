@@ -165,8 +165,10 @@ def test_main_raises_on_invalid_comparison_tolerance(tmp_path):
         main(config_path)
 
 
-def test_main_raises_on_missing_comparison_repo(tmp_path):
-    """Test that a benchmark config missing REPO_LOCATION_COMPARISON is rejected."""
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_runs_single_target_when_comparison_repo_omitted(mock_model_main, tmp_path, capsys):
+    """Test that omitting REPO_LOCATION_COMPARISON runs single-run mode: one target, no
+    comparison, and a clear reason (not 'target failed') for why it was skipped."""
     config_path = tmp_path / "benchmark.json"
     config_path.write_text(json.dumps({
         "AMI_ID": "id",
@@ -175,6 +177,115 @@ def test_main_raises_on_missing_comparison_repo(tmp_path):
         "IAM_INSTANCE_PROFILE": "profile",
         "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
         "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
+        "OASISLMF_VERSION": "2.5.6",
+    }))
+
+    output = main(config_path)
+
+    assert mock_model_main.call_count == 1
+    assert [r["version"] for r in output["results"]] == ["2.5.6"]
+    assert output["comparison"] is None
+    assert "no baseline comparison configured" in capsys.readouterr().out
+
+
+@mock.patch("alpaca.benchmark.main.upload_baseline")
+@mock.patch("alpaca.benchmark.main.download_baseline")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_single_run_compares_against_s3_baseline(
+    mock_model_main, mock_download_baseline, mock_upload_baseline, tmp_path, capsys
+):
+    """Test that single-run mode downloads and diffs against a stored S3 baseline when
+    OASISLMF_VERSION_COMPARISON and BENCHMARK_BUCKET are both set."""
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "baseline", {"summary.csv": "a,b\n1,2\n"})
+
+    def fake_download(bucket, version, local_directory, config):
+        _write_output_files(local_directory, {"summary.csv": "a,b\n1,2\n"})
+        return Path(local_directory)
+
+    mock_download_baseline.side_effect = fake_download
+    config_path = tmp_path / "benchmark.json"
+    config_path.write_text(json.dumps({
+        "AMI_ID": "id",
+        "SECURITY_GROUP_ID": "group id",
+        "SUBNET_ID": "mr subnet",
+        "IAM_INSTANCE_PROFILE": "profile",
+        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+        "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
+        "OASISLMF_VERSION": "2.5.6",
+        "OASISLMF_VERSION_COMPARISON": "2.5.4",
+        "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
+        "RESULT_DIRECTORY": str(results_dir),
+    }))
+
+    output = main(config_path)
+
+    mock_download_baseline.assert_called_once()
+    assert mock_download_baseline.call_args.args[0] == "s3://alpaca-benchmark"
+    assert mock_download_baseline.call_args.args[1] == "2.5.4"
+    mock_upload_baseline.assert_not_called()
+    assert output["comparison"] == {"status": "pass", "different_files": []}
+    assert [r["version"] for r in output["results"]] == ["2.5.6", "2.5.4 (S3 baseline)"]
+    assert "PASS:\nOutputs identical" in capsys.readouterr().out
+
+
+@mock.patch("alpaca.benchmark.main.upload_baseline")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_single_run_publishes_baseline_when_configured(mock_model_main, mock_upload_baseline, tmp_path):
+    """Test that PUBLISH_BASELINE uploads the target's own results under OASISLMF_VERSION."""
+    results_dir = tmp_path / "results"
+    config_path = tmp_path / "benchmark.json"
+    config_path.write_text(json.dumps({
+        "AMI_ID": "id",
+        "SECURITY_GROUP_ID": "group id",
+        "SUBNET_ID": "mr subnet",
+        "IAM_INSTANCE_PROFILE": "profile",
+        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+        "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
+        "OASISLMF_VERSION": "2.5.4",
+        "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
+        "PUBLISH_BASELINE": "True",
+        "RESULT_DIRECTORY": str(results_dir),
+    }))
+
+    main(config_path)
+
+    mock_upload_baseline.assert_called_once()
+    assert mock_upload_baseline.call_args.args[0] == "s3://alpaca-benchmark"
+    assert mock_upload_baseline.call_args.args[1] == "2.5.4"
+
+
+def test_main_raises_when_publish_baseline_missing_bucket(tmp_path):
+    """Test that PUBLISH_BASELINE without BENCHMARK_BUCKET is rejected before any EC2 spend."""
+    config_path = tmp_path / "benchmark.json"
+    config_path.write_text(json.dumps({
+        "AMI_ID": "id",
+        "SECURITY_GROUP_ID": "group id",
+        "SUBNET_ID": "mr subnet",
+        "IAM_INSTANCE_PROFILE": "profile",
+        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+        "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
+        "OASISLMF_VERSION": "2.5.4",
+        "PUBLISH_BASELINE": "True",
+    }))
+
+    with pytest.raises(OasisAlpacaConfigError):
+        main(config_path)
+
+
+def test_main_raises_when_comparison_version_missing_bucket_in_single_run_mode(tmp_path):
+    """Test that OASISLMF_VERSION_COMPARISON without BENCHMARK_BUCKET is rejected in
+    single-run mode, since there'd be nowhere to fetch the baseline from."""
+    config_path = tmp_path / "benchmark.json"
+    config_path.write_text(json.dumps({
+        "AMI_ID": "id",
+        "SECURITY_GROUP_ID": "group id",
+        "SUBNET_ID": "mr subnet",
+        "IAM_INSTANCE_PROFILE": "profile",
+        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+        "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
+        "OASISLMF_VERSION": "2.5.6",
+        "OASISLMF_VERSION_COMPARISON": "2.5.4",
     }))
 
     with pytest.raises(OasisAlpacaConfigError):

@@ -32,25 +32,32 @@ def build_benchmark_plan(config):
         config: Validated benchmark configuration dictionary.
 
     Returns:
-        dict: With keys 'models' (model names from REPO_LOCATION and
+        dict: With keys 'models' (model names from REPO_LOCATION and, if present,
             REPO_LOCATION_COMPARISON, deduplicated), 'comparisons' (list of
             'OasisLMF {version}' strings, using 'latest' where a version isn't
-            pinned) and 'execution_mode'.
+            pinned; when REPO_LOCATION_COMPARISON is omitted but
+            OASISLMF_VERSION_COMPARISON is set, that entry is labelled as an S3
+            baseline rather than a second live run) and 'execution_mode'.
 
     Raises:
         OasisAlpacaConfigError: If EXECUTION_MODE is set to something other than
             'parallel' or 'sequential'.
     """
+    locations = [config["REPO_LOCATION"]]
+    if config.get("REPO_LOCATION_COMPARISON"):
+        locations.append(config["REPO_LOCATION_COMPARISON"])
+
     models = []
-    for location in (config["REPO_LOCATION"], config["REPO_LOCATION_COMPARISON"]):
+    for location in locations:
         name = model_name_from_location(location)
         if name not in models:
             models.append(name)
 
-    comparisons = [
-        f"OasisLMF {config.get('OASISLMF_VERSION') or 'latest'}",
-        f"OasisLMF {config.get('OASISLMF_VERSION_COMPARISON') or 'latest'}",
-    ]
+    comparisons = [f"OasisLMF {config.get('OASISLMF_VERSION') or 'latest'}"]
+    if config.get("REPO_LOCATION_COMPARISON"):
+        comparisons.append(f"OasisLMF {config.get('OASISLMF_VERSION_COMPARISON') or 'latest'}")
+    elif config.get("OASISLMF_VERSION_COMPARISON"):
+        comparisons.append(f"OasisLMF {config['OASISLMF_VERSION_COMPARISON']} (S3 baseline)")
 
     execution_mode = config.get("EXECUTION_MODE", "parallel")
     if execution_mode not in VALID_EXECUTION_MODES:
@@ -91,7 +98,7 @@ def build_model_run_configs(config):
     """Build a per-target model-run config for each side of a benchmark.
 
     Each target reuses every shared EC2/OasisLMF setting from the benchmark config, but
-    gets its own REPO_LOCATION, OASISLMF_VERSION and RESULT_DIRECTORY, since the two runs
+    gets its own REPO_LOCATION, OASISLMF_VERSION and RESULT_DIRECTORY, since the runs
     execute as ordinary, independent 'alpaca model' runs (which may happen concurrently)
     and must not race on the same instance settings or output directory.
 
@@ -99,15 +106,15 @@ def build_model_run_configs(config):
         config: Validated benchmark configuration dictionary.
 
     Returns:
-        list[dict]: Two entries, in baseline-then-comparison order, each with keys 'label'
-            ('baseline' or 'comparison'), 'model' (short model name, see
+        list[dict]: One entry (single-run mode) if REPO_LOCATION_COMPARISON is unset, or
+            two entries in baseline-then-comparison order otherwise, each with keys
+            'label' ('baseline' or 'comparison'), 'model' (short model name, see
             model_name_from_location), 'version' (the pinned version, or 'latest' when
             unset) and 'run_config' (a config dict suitable for alpaca.model.main.main).
     """
-    targets = [
-        ("baseline", config["REPO_LOCATION"], config.get("OASISLMF_VERSION")),
-        ("comparison", config["REPO_LOCATION_COMPARISON"], config.get("OASISLMF_VERSION_COMPARISON")),
-    ]
+    targets = [("baseline", config["REPO_LOCATION"], config.get("OASISLMF_VERSION"))]
+    if config.get("REPO_LOCATION_COMPARISON"):
+        targets.append(("comparison", config["REPO_LOCATION_COMPARISON"], config.get("OASISLMF_VERSION_COMPARISON")))
     result_directory = config.get("RESULT_DIRECTORY", "./runs").rstrip("/")
 
     run_configs = []

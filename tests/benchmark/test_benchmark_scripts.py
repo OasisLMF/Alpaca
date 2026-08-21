@@ -35,6 +35,26 @@ def test_build_benchmark_plan_dedupes_identical_models():
     assert plan["execution_mode"] == "parallel"
 
 
+def test_build_benchmark_plan_single_run_mode_omits_comparison_model():
+    """Test that a config without REPO_LOCATION_COMPARISON only lists the one model."""
+    config = {"REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind", "OASISLMF_VERSION": "2.5.6"}
+    plan = build_benchmark_plan(config)
+    assert plan["models"] == ["PiWind"]
+    assert plan["comparisons"] == ["OasisLMF 2.5.6"]
+
+
+def test_build_benchmark_plan_single_run_mode_labels_s3_baseline():
+    """Test that an S3-sourced comparison version is labelled distinctly from a live one."""
+    config = {
+        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+        "OASISLMF_VERSION": "2.5.6",
+        "OASISLMF_VERSION_COMPARISON": "2.5.4",
+        "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
+    }
+    plan = build_benchmark_plan(config)
+    assert plan["comparisons"] == ["OasisLMF 2.5.6", "OasisLMF 2.5.4 (S3 baseline)"]
+
+
 def test_build_benchmark_plan_lists_both_models_when_different():
     config = {
         "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
@@ -156,6 +176,15 @@ def test_build_model_run_configs_omits_version_when_unset():
     assert "OASISLMF_VERSION" not in comparison["run_config"]
     assert baseline["version"] == "latest"
     assert comparison["version"] == "latest"
+
+
+def test_build_model_run_configs_returns_single_target_without_comparison_repo():
+    """Test that omitting REPO_LOCATION_COMPARISON produces a single-run-mode target."""
+    config = {key: value for key, value in BASE_BENCHMARK_CONFIG.items() if not key.startswith("REPO_LOCATION_C")}
+    run_configs = build_model_run_configs(config)
+
+    assert [entry["label"] for entry in run_configs] == ["baseline"]
+    assert run_configs[0]["run_config"]["RESULT_DIRECTORY"] == "./runs/baseline"
 
 
 def test_format_benchmark_plan_matches_documented_layout():

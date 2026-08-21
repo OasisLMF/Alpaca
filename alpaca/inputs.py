@@ -2,6 +2,13 @@
 AMI_ID = ("AMI_ID", "Amazon Machine ID", "ami-09079da11cd2861fa")
 AWS_PROFILE = ("AWS_PROFILE", "Named AWS CLI profile to use for AWS calls and the SSM session tunnel (optional)", "")
 AWS_REGION = ("AWS_REGION", "region of EC2 instance to create", "eu-west-1")
+BENCHMARK_BUCKET = (
+    "BENCHMARK_BUCKET",
+    "S3 bucket (s3://bucket-name) storing versioned OasisLMF baseline outputs and performance metrics. In "
+    "single-run mode (REPO_LOCATION_COMPARISON omitted), used to fetch OASISLMF_VERSION_COMPARISON's stored "
+    "baseline for comparison, and/or as the publish target for PUBLISH_BASELINE",
+    ""
+)
 COMPARISON_TOLERANCE = (
     "COMPARISON_TOLERANCE",
     "Relative tolerance for numeric differences when comparing benchmark run outputs (e.g. 1e-6), "
@@ -28,13 +35,22 @@ OASISLMF_VERSION_COMPARISON = ("OASISLMF_VERSION_COMPARISON", "Specific version 
 PATH_TO_DOCKER_COMPOSE = ("PATH_TO_DOCKER_COMPOSE", "Path from base of REPO_LOCATION to docker-compose file (or bash script)",
                           "./docker-compose.yml")
 PATH_TO_OASISLMF_JSON = ("PATH_TO_OASISLMF_JSON", "Path from base of REPO_LOCATION to OASISLMF.JSON file", "./oasislmf.json")
+PUBLISH_BASELINE = (
+    "PUBLISH_BASELINE",
+    "When 'True' and BENCHMARK_BUCKET is set, publish this run's OasisLMF output and performance metrics to "
+    "BENCHMARK_BUCKET under OASISLMF_VERSION as that version's new stored baseline (single-run mode only, "
+    "requires a specific OASISLMF_VERSION rather than 'latest')",
+    "False"
+)
 PYTEST_ARGS = ("PYTEST_ARGS", "Arguments to pass to PyTest (already uses -vv flag)", "")
 REPO_LOCATION = ("REPO_LOCATION", "S3 location (s3://bucket) or link to GitHub repo (https://github.com/name/repo) with data",
                  "https://github.com/OasisLMF/OasisPiWind")
 REPO_LOCATION_COMPARISON = (
     "REPO_LOCATION_COMPARISON",
-    "S3 location (s3://bucket) or link to GitHub repo (https://github.com/name/repo) to benchmark against",
-    "https://github.com/OasisLMF/OasisPiWind"
+    "S3 location (s3://bucket) or link to GitHub repo (https://github.com/name/repo) to benchmark against. "
+    "Omit for single-run mode, where only REPO_LOCATION runs and OASISLMF_VERSION_COMPARISON (if set) is "
+    "instead fetched from BENCHMARK_BUCKET",
+    ""
 )
 RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket) or local (./path/to/local)", "./runs")
 SECURITY_GROUP_ID = ("SECURITY_GROUP_ID", "Security group id of EC2 instance", "MySecurityGroup")
