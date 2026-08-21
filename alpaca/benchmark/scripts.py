@@ -34,10 +34,12 @@ def build_benchmark_plan(config):
     Returns:
         dict: With keys 'models' (model names from REPO_LOCATION and, if present,
             REPO_LOCATION_COMPARISON, deduplicated), 'comparisons' (list of
-            'OasisLMF {version}' strings, using 'latest' where a version isn't
-            pinned; when REPO_LOCATION_COMPARISON is omitted but
-            OASISLMF_VERSION_COMPARISON is set, that entry is labelled as an S3
-            baseline rather than a second live run) and 'execution_mode'.
+            'OasisLMF {version}' strings, using 'latest' where a version isn't pinned;
+            when REPO_LOCATION_COMPARISON is omitted but OASISLMF_VERSION_COMPARISON is
+            set, that entry is labelled as an S3 baseline rather than a second live run;
+            when OASISLMF_BRANCH is set, every live target installs from that branch
+            instead of a version - see build_model_run_configs - so each entry reads
+            'OasisLMF branch:{name}' instead) and 'execution_mode'.
 
     Raises:
         OasisAlpacaConfigError: If EXECUTION_MODE is set to something other than
@@ -53,9 +55,15 @@ def build_benchmark_plan(config):
         if name not in models:
             models.append(name)
 
-    comparisons = [f"OasisLMF {config.get('OASISLMF_VERSION') or 'latest'}"]
+    branch = config.get("OASISLMF_BRANCH")
+    baseline_label = f"OasisLMF branch:{branch}" if branch else f"OasisLMF {config.get('OASISLMF_VERSION') or 'latest'}"
+    comparisons = [baseline_label]
     if config.get("REPO_LOCATION_COMPARISON"):
-        comparisons.append(f"OasisLMF {config.get('OASISLMF_VERSION_COMPARISON') or 'latest'}")
+        # OASISLMF_BRANCH is a single, shared setting (see SHARED_MODEL_CONFIG_KEYS) - there's
+        # no OASISLMF_BRANCH_COMPARISON - so when it's set, the comparison target installs
+        # from that same branch too, taking priority over OASISLMF_VERSION_COMPARISON exactly
+        # as it does for the baseline target.
+        comparisons.append(baseline_label if branch else f"OasisLMF {config.get('OASISLMF_VERSION_COMPARISON') or 'latest'}")
     elif config.get("OASISLMF_VERSION_COMPARISON"):
         comparisons.append(f"OasisLMF {config['OASISLMF_VERSION_COMPARISON']} (S3 baseline)")
 

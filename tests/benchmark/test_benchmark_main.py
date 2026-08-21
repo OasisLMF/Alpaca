@@ -168,7 +168,8 @@ def test_main_raises_on_invalid_comparison_tolerance(tmp_path):
 @mock.patch("alpaca.benchmark.executor.model_main")
 def test_main_runs_single_target_when_comparison_repo_omitted(mock_model_main, tmp_path, capsys):
     """Test that omitting REPO_LOCATION_COMPARISON runs single-run mode: one target, no
-    comparison, and a clear reason (not 'target failed') for why it was skipped."""
+    comparison, and a clear reason (not 'target failed') for why it was skipped.
+    """
     config_path = tmp_path / "benchmark.json"
     config_path.write_text(json.dumps({
         "AMI_ID": "id",
@@ -195,7 +196,8 @@ def test_main_single_run_compares_against_s3_baseline(
     mock_model_main, mock_download_baseline, mock_upload_baseline, tmp_path, capsys
 ):
     """Test that single-run mode downloads and diffs against a stored S3 baseline when
-    OASISLMF_VERSION_COMPARISON and BENCHMARK_BUCKET are both set."""
+    OASISLMF_VERSION_COMPARISON and BENCHMARK_BUCKET are both set.
+    """
     results_dir = tmp_path / "results"
     _write_output_files(results_dir / "baseline", {"summary.csv": "a,b\n1,2\n"})
 
@@ -275,7 +277,8 @@ def test_main_raises_when_publish_baseline_missing_bucket(tmp_path):
 
 def test_main_raises_when_comparison_version_missing_bucket_in_single_run_mode(tmp_path):
     """Test that OASISLMF_VERSION_COMPARISON without BENCHMARK_BUCKET is rejected in
-    single-run mode, since there'd be nowhere to fetch the baseline from."""
+    single-run mode, since there'd be nowhere to fetch the baseline from.
+    """
     config_path = tmp_path / "benchmark.json"
     config_path.write_text(json.dumps({
         "AMI_ID": "id",

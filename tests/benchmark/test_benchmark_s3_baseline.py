@@ -1,7 +1,6 @@
 from alpaca.benchmark.s3_baseline import validate_s3_baseline_config, upload_baseline, download_baseline
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from moto import mock_aws
-from pathlib import Path
 
 import boto3
 import logging

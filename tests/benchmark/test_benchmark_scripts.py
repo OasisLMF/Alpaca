@@ -55,6 +55,29 @@ def test_build_benchmark_plan_single_run_mode_labels_s3_baseline():
     assert plan["comparisons"] == ["OasisLMF 2.5.6", "OasisLMF 2.5.4 (S3 baseline)"]
 
 
+def test_build_benchmark_plan_labels_single_run_mode_branch():
+    """Test that OASISLMF_BRANCH is reflected in the plan instead of misleadingly
+    falling back to 'OasisLMF latest' when no OASISLMF_VERSION is set.
+    """
+    config = {"REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind", "OASISLMF_BRANCH": "my-feature-branch"}
+    plan = build_benchmark_plan(config)
+    assert plan["comparisons"] == ["OasisLMF branch:my-feature-branch"]
+
+
+def test_build_benchmark_plan_labels_dual_mode_branch_on_both_targets():
+    """Test that OASISLMF_BRANCH, being shared with no _COMPARISON counterpart, is shown
+    for both targets, since both actually install from that same branch.
+    """
+    config = {
+        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
+        "OASISLMF_BRANCH": "my-feature-branch",
+        "OASISLMF_VERSION_COMPARISON": "2.4.9",
+    }
+    plan = build_benchmark_plan(config)
+    assert plan["comparisons"] == ["OasisLMF branch:my-feature-branch", "OasisLMF branch:my-feature-branch"]
+
+
 def test_build_benchmark_plan_lists_both_models_when_different():
     config = {
         "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
@@ -160,7 +183,8 @@ def test_build_model_run_configs_uses_separate_result_directories():
 
 def test_build_model_run_configs_names_ec2_instances_by_model_and_version():
     """Test that each target's EC2_NAME identifies its model and version, so concurrent
-    instances are distinguishable in the AWS console."""
+    instances are distinguishable in the AWS console.
+    """
     run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
 
     baseline, comparison = run_configs
@@ -171,7 +195,8 @@ def test_build_model_run_configs_names_ec2_instances_by_model_and_version():
 def test_build_model_run_configs_ec2_name_overrides_top_level_setting():
     """Test that the derived per-target EC2_NAME takes priority over a top-level
     EC2_NAME, since a single shared name would defeat the point of distinguishing
-    concurrent instances."""
+    concurrent instances.
+    """
     config = {**BASE_BENCHMARK_CONFIG, "EC2_NAME": "MyCustomName"}
     run_configs = build_model_run_configs(config)
 

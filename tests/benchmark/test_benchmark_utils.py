@@ -7,7 +7,8 @@ from alpaca.inputs import (
 
 def test_required_config_benchmark_includes_primary_repo_location():
     """Test that the primary repo location is required, but the comparison one is not,
-    since its absence is what selects single-run mode."""
+    since its absence is what selects single-run mode.
+    """
     assert REPO_LOCATION in REQUIRED_CONFIG_BENCHMARK
     assert REPO_LOCATION_COMPARISON not in REQUIRED_CONFIG_BENCHMARK
     assert REPO_LOCATION_COMPARISON in OPTIONAL_CONFIG_BENCHMARK
