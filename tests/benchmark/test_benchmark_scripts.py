@@ -3,6 +3,7 @@ from alpaca.benchmark.scripts import (
 )
 from alpaca.exceptions import OasisAlpacaConfigError
 
+import logging
 import pytest
 
 
@@ -64,9 +65,9 @@ def test_build_benchmark_plan_labels_single_run_mode_branch():
     assert plan["comparisons"] == ["OasisLMF branch:my-feature-branch"]
 
 
-def test_build_benchmark_plan_labels_dual_mode_branch_on_both_targets():
-    """Test that OASISLMF_BRANCH, being shared with no _COMPARISON counterpart, is shown
-    for both targets, since both actually install from that same branch.
+def test_build_benchmark_plan_scopes_branch_independently_per_target():
+    """Test that OASISLMF_BRANCH only labels the baseline target, and does not leak onto
+    the comparison target when OASISLMF_BRANCH_COMPARISON isn't also set.
     """
     config = {
         "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
@@ -75,7 +76,32 @@ def test_build_benchmark_plan_labels_dual_mode_branch_on_both_targets():
         "OASISLMF_VERSION_COMPARISON": "2.4.9",
     }
     plan = build_benchmark_plan(config)
-    assert plan["comparisons"] == ["OasisLMF branch:my-feature-branch", "OasisLMF branch:my-feature-branch"]
+    assert plan["comparisons"] == ["OasisLMF branch:my-feature-branch", "OasisLMF 2.4.9"]
+
+
+def test_build_benchmark_plan_labels_both_branches_when_both_set():
+    """Test that two different branches can be benchmarked against each other in one
+    dual-target run, each shown with its own label.
+    """
+    config = {
+        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
+        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
+        "OASISLMF_BRANCH": "stable/2.3.x",
+        "OASISLMF_BRANCH_COMPARISON": "stable/2.4.x",
+    }
+    plan = build_benchmark_plan(config)
+    assert plan["comparisons"] == ["OasisLMF branch:stable/2.3.x", "OasisLMF branch:stable/2.4.x"]
+
+
+def test_build_benchmark_plan_warns_when_branch_comparison_set_in_single_run_mode(caplog):
+    """Test that OASISLMF_BRANCH_COMPARISON is a no-op (with a warning) in single-run
+    mode, since there's no second live target for it to apply to.
+    """
+    config = {"REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind", "OASISLMF_BRANCH_COMPARISON": "stable/2.4.x"}
+    with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.scripts"):
+        plan = build_benchmark_plan(config)
+    assert plan["comparisons"] == ["OasisLMF latest"]
+    assert "only applies in dual-target mode" in caplog.text
 
 
 def test_build_benchmark_plan_lists_both_models_when_different():
@@ -179,6 +205,49 @@ def test_build_model_run_configs_uses_separate_result_directories():
     assert baseline["run_config"]["RESULT_DIRECTORY"] == "./runs/baseline"
     assert comparison["run_config"]["RESULT_DIRECTORY"] == "./runs/comparison"
     assert baseline["run_config"]["RESULT_DIRECTORY"] != comparison["run_config"]["RESULT_DIRECTORY"]
+
+
+def test_build_model_run_configs_sets_independent_branch_per_target():
+    """Test that OASISLMF_BRANCH and OASISLMF_BRANCH_COMPARISON install different
+    branches on their own target, with no fallback to one another.
+    """
+    config = {
+        **BASE_BENCHMARK_CONFIG,
+        "OASISLMF_BRANCH": "stable/2.3.x",
+        "OASISLMF_BRANCH_COMPARISON": "stable/2.4.x",
+    }
+    run_configs = build_model_run_configs(config)
+
+    baseline, comparison = run_configs
+    assert baseline["run_config"]["OASISLMF_BRANCH"] == "stable/2.3.x"
+    assert comparison["run_config"]["OASISLMF_BRANCH"] == "stable/2.4.x"
+    assert baseline["version"] == "branch:stable/2.3.x"
+    assert comparison["version"] == "branch:stable/2.4.x"
+
+
+def test_build_model_run_configs_branch_omits_version_from_run_config():
+    """Test that a branch-driven target doesn't also carry its OASISLMF_VERSION, since
+    the branch already takes priority at install time and a leftover version would be
+    misleading in the run_config.
+    """
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_BRANCH": "stable/2.3.x"}
+    run_configs = build_model_run_configs(config)
+
+    baseline = run_configs[0]
+    assert "OASISLMF_VERSION" not in baseline["run_config"]
+    assert baseline["run_config"]["OASISLMF_BRANCH"] == "stable/2.3.x"
+
+
+def test_build_model_run_configs_comparison_target_unaffected_by_baseline_branch():
+    """Test that OASISLMF_BRANCH set alone (no OASISLMF_BRANCH_COMPARISON) does not leak
+    onto the comparison target - it keeps installing its own OASISLMF_VERSION_COMPARISON.
+    """
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_BRANCH": "stable/2.3.x"}
+    run_configs = build_model_run_configs(config)
+
+    comparison = run_configs[1]
+    assert "OASISLMF_BRANCH" not in comparison["run_config"]
+    assert comparison["run_config"]["OASISLMF_VERSION"] == "2.4.9"
 
 
 def test_build_model_run_configs_names_ec2_instances_by_model_and_version():
