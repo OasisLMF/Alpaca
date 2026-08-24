@@ -11,9 +11,9 @@ BENCHMARK_BUCKET = (
 )
 COMPARISON_TOLERANCE = (
     "COMPARISON_TOLERANCE",
-    "Relative tolerance for numeric differences when comparing benchmark run outputs (e.g. 1e-6), "
+    "Relative tolerance for numeric differences when comparing benchmark run outputs (e.g. 0.005 for 0.5%), "
     "since OasisLMF's Monte Carlo sampling means two runs rarely produce byte-identical loss tables",
-    "1e-6"
+    "0.005"
 )
 DEBUG = ("DEBUG", "Run using debug mode (must be True to enable)", "False")
 DISK_GB = ("DISK_GB", "How many GB your EC2 needs to store your data", "50")

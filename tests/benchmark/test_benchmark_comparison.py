@@ -95,7 +95,7 @@ def test_compare_output_dirs_still_flags_differences_beyond_tolerance(tmp_path):
     baseline = tmp_path / "baseline"
     comparison = tmp_path / "comparison"
     _write(baseline, {"summary.csv": "a,b\n1,2.0\n"})
-    _write(comparison, {"summary.csv": "a,b\n1,2.001\n"})
+    _write(comparison, {"summary.csv": "a,b\n1,2.04\n"})
 
     assert compare_output_dirs(baseline, comparison) == ["summary.csv"]
 
