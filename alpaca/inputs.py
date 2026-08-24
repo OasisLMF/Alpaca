@@ -36,6 +36,13 @@ INSTANCE_TYPE = ("INSTANCE_TYPE", "Server configuration, amount of resources:", 
 LOG_LEVEL = ("LOG_LEVEL", "Verbosity of logging", "INFO")
 MAX_LIFETIME_HOURS = ("MAX_LIFETIME_HOURS", "Max lifetime of EC2 instance in hours", "2")
 OASISLMF_BRANCH = ("OASISLMF_BRANCH", "Branch of the OasisLMF repo to install from source, used in place of OASISLMF_VERSION", "")
+OASISLMF_BRANCH_COMPARISON = (
+    "OASISLMF_BRANCH_COMPARISON",
+    "Branch of the OasisLMF repo to install from source on the comparison target, used in place of "
+    "OASISLMF_VERSION_COMPARISON. Only applies in dual-target benchmark mode (REPO_LOCATION_COMPARISON set) - "
+    "there is no comparison-target equivalent in single-run mode",
+    ""
+)
 OASISLMF_VERSION = ("OASISLMF_VERSION", "Specific version of OasisLMF to use", "")
 OASISLMF_VERSION_COMPARISON = ("OASISLMF_VERSION_COMPARISON", "Specific version of OasisLMF to benchmark against", "")
 PATH_TO_DOCKER_COMPOSE = ("PATH_TO_DOCKER_COMPOSE", "Path from base of REPO_LOCATION to docker-compose file (or bash script)",
