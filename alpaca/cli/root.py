@@ -2,12 +2,13 @@ import sys
 from alpaca.cli.images import print_alpaca
 from alpaca.cli.run_start import run_model, run_api, run_pytest, run_benchmark
 from alpaca.cli.config_router import create_config_router
+from alpaca.logging_context import TargetFilter
 
 import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+_handler = logging.StreamHandler()
+_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s%(target)s: %(message)s"))
+_handler.addFilter(TargetFilter())
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 
 
 def main():

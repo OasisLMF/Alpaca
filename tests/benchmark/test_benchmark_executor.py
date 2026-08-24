@@ -1,7 +1,9 @@
 from alpaca.benchmark.executor import run_benchmark_targets
+from alpaca.logging_context import TargetFilter
 
 from unittest import mock
 
+import logging
 import threading
 import time
 
@@ -141,3 +143,32 @@ def test_run_benchmark_targets_parallel_runs_concurrently(mock_model_main, tmp_p
     run_benchmark_targets(run_configs, "parallel")
 
     assert concurrency["max"] == 2
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_run_benchmark_targets_tags_log_records_with_model_and_version(mock_model_main, tmp_path):
+    seen_targets = []
+
+    def fake_model_main(run_config):
+        record = logging.LogRecord("test", logging.INFO, __file__, 1, "message", None, None)
+        TargetFilter().filter(record)
+        seen_targets.append(record.target)
+
+    mock_model_main.side_effect = fake_model_main
+    run_configs = [_entry("baseline", tmp_path / "baseline"), _entry("comparison", tmp_path / "comparison", version="2.4.9")]
+
+    run_benchmark_targets(run_configs, "sequential")
+
+    assert seen_targets == [" [PiWind 2.3.3]", " [PiWind 2.4.9]"]
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_run_benchmark_targets_clears_log_target_after_each_target(mock_model_main, tmp_path):
+    mock_model_main.side_effect = None
+    run_configs = [_entry("baseline", tmp_path / "baseline")]
+
+    run_benchmark_targets(run_configs, "sequential")
+
+    record = logging.LogRecord("test", logging.INFO, __file__, 1, "message", None, None)
+    TargetFilter().filter(record)
+    assert record.target == ""

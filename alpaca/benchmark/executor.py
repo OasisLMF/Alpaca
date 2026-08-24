@@ -1,5 +1,6 @@
 from alpaca.model.main import main as model_main
 from alpaca.benchmark.timing import resolve_model_runtime
+from alpaca.logging_context import log_target
 
 import concurrent.futures
 import logging
@@ -16,7 +17,10 @@ def _run_target(run_config_entry):
     'alpaca model' run. The wall-clock time around that call includes EC2 startup, upload
     and download as well as the model run itself, so on success it's replaced as
     'runtime_seconds' by the model's own reported runtime (see resolve_model_runtime),
-    with the wall-clock kept separately as 'total_runtime_seconds'.
+    with the wall-clock kept separately as 'total_runtime_seconds'. Every log line emitted
+    during the call (including from other modules, e.g. alpaca.remote_controller) is tagged
+    with this target's model/version via log_target, so concurrent targets' interleaved
+    console output is distinguishable (see alpaca.logging_context.TargetFilter).
 
     Args:
         run_config_entry: One entry as returned by build_benchmark_targets, with 'label',
@@ -34,11 +38,12 @@ def _run_target(run_config_entry):
     """
     start = time.monotonic()
     status = "success"
-    try:
-        model_main(run_config_entry["run_config"])
-    except Exception:
-        status = "failed"
-        logger.exception(f"Benchmark target '{run_config_entry['label']}' failed")
+    with log_target(f"{run_config_entry['model']} {run_config_entry['version']}"):
+        try:
+            model_main(run_config_entry["run_config"])
+        except Exception:
+            status = "failed"
+            logger.exception(f"Benchmark target '{run_config_entry['label']}' failed")
     total_runtime_seconds = round(time.monotonic() - start)
 
     runtime_seconds, step_timings = total_runtime_seconds, {}
