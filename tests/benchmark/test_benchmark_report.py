@@ -48,6 +48,14 @@ def test_build_report_text_omits_timing_comparison_when_a_target_failed():
     assert "Output comparison skipped" in report_text
 
 
+def test_build_report_text_uses_custom_skip_reason():
+    """Test that a caller-supplied skip_reason overrides the default failure message."""
+    results = [_result("PiWind", "2.5.6", "success", 210)]
+    report_text = build_report_text(results, None, skip_reason="no baseline comparison configured")
+
+    assert "Output comparison skipped: no baseline comparison configured." in report_text
+
+
 def test_write_report_creates_file_with_report_text(tmp_path):
     report_path = write_report("some report text", tmp_path / "results")
 
