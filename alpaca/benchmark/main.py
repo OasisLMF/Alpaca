@@ -3,8 +3,10 @@ from alpaca.benchmark.scripts import (
     build_benchmark_plan, build_execution_plan, build_model_run_configs, format_benchmark_plan
 )
 from alpaca.benchmark.executor import run_benchmark_targets
-from alpaca.benchmark.comparison import build_comparison_report, format_comparison_report, resolve_relative_tolerance
+from alpaca.benchmark.comparison import build_comparison_report, resolve_relative_tolerance
+from alpaca.benchmark.report import build_report_text, write_report
 from alpaca.config import load_config
+from pathlib import Path
 
 import logging
 
@@ -12,21 +14,22 @@ logger = logging.getLogger(__name__)
 
 
 def main(config_file):
-    """Load and validate a benchmark configuration, run both targets and compare their results.
+    """Load and validate a benchmark configuration, run both targets and report on them.
 
     Reuses alpaca.model.main.main for each target's EC2 lifecycle (upload, run, download,
     terminate) rather than duplicating it, running the baseline and comparison targets
     according to EXECUTION_MODE. If both targets succeed, their output directories are
-    compared and the comparison report is printed; comparison is skipped, with a warning,
-    if either target failed.
+    compared. Either way, a combined report (per-target status/runtime, a step-by-step
+    timing comparison when both succeeded, and the output comparison or why it was
+    skipped) is printed and saved alongside the targets' result directories.
 
     Args:
         config_file: Path to the JSON configuration file for the benchmark run.
 
     Returns:
-        dict: 'results' (one dict per target, each with 'model', 'version', 'status' and
-            'runtime_seconds') and 'comparison' (the report from build_comparison_report,
-            or None if comparison was skipped).
+        dict: 'results' (one dict per target, see alpaca.benchmark.executor._run_target),
+            'comparison' (the report from build_comparison_report, or None if comparison
+            was skipped) and 'report_path' (where the combined report was written).
     """
     config = load_config(config_file, REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK)
     plan = build_benchmark_plan(config)
@@ -45,11 +48,16 @@ def main(config_file):
             comparison_config["run_config"]["RESULT_DIRECTORY"],
             relative_tolerance,
         )
-        print(format_comparison_report(comparison_report))
     else:
         logger.warning("Skipping result comparison because at least one target failed")
 
-    return {"results": results, "comparison": comparison_report}
+    report_text = build_report_text(results, comparison_report)
+    print(report_text)
+    result_directory = Path(run_configs[0]["run_config"]["RESULT_DIRECTORY"]).parent
+    report_path = write_report(report_text, result_directory)
+    logger.info(f"Benchmark report written to {report_path}")
+
+    return {"results": results, "comparison": comparison_report, "report_path": report_path}
 
 
 if __name__ == "__main__":

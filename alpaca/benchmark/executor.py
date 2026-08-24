@@ -1,4 +1,5 @@
 from alpaca.model.main import main as model_main
+from alpaca.benchmark.timing import resolve_model_runtime
 
 import concurrent.futures
 import logging
@@ -12,16 +13,22 @@ def _run_target(run_config_entry):
 
     Reuses alpaca.model.main.main for the EC2 lifecycle (upload, run, download, terminate)
     rather than duplicating it, so a benchmark target runs exactly like an ordinary
-    'alpaca model' run.
+    'alpaca model' run. The wall-clock time around that call includes EC2 startup, upload
+    and download as well as the model run itself, so on success it's replaced as
+    'runtime_seconds' by the model's own reported runtime (see resolve_model_runtime),
+    with the wall-clock kept separately as 'total_runtime_seconds'.
 
     Args:
         run_config_entry: One entry as returned by build_model_run_configs, with 'label',
             'model', 'version' and 'run_config' keys.
 
     Returns:
-        dict: {'model', 'version', 'status', 'runtime_seconds'}. 'status' is 'success'
-            unless alpaca.model.main.main raises, in which case it is 'failed' and the
-            exception is logged.
+        dict: {'model', 'version', 'status', 'runtime_seconds', 'total_runtime_seconds',
+            'step_timings'}. 'status' is 'success' unless alpaca.model.main.main raises, in
+            which case it is 'failed' and the exception is logged. 'step_timings' is a dict
+            of every 'COMPLETED: <step> in <seconds>s' OasisLMF reported (e.g.
+            'execution.runner.run', 'computation.generate.files.run'), empty on failure or
+            when result.txt couldn't be found/parsed.
     """
     start = time.monotonic()
     status = "success"
@@ -30,12 +37,22 @@ def _run_target(run_config_entry):
     except Exception:
         status = "failed"
         logger.exception(f"Benchmark target '{run_config_entry['label']}' failed")
-    runtime_seconds = round(time.monotonic() - start)
+    total_runtime_seconds = round(time.monotonic() - start)
+
+    runtime_seconds, step_timings = total_runtime_seconds, {}
+    if status == "success":
+        model_runtime_seconds, step_timings = resolve_model_runtime(
+            run_config_entry["run_config"]["RESULT_DIRECTORY"], total_runtime_seconds
+        )
+        runtime_seconds = round(model_runtime_seconds)
+
     return {
         "model": run_config_entry["model"],
         "version": run_config_entry["version"],
         "status": status,
         "runtime_seconds": runtime_seconds,
+        "total_runtime_seconds": total_runtime_seconds,
+        "step_timings": step_timings,
     }
 
 
@@ -49,7 +66,8 @@ def run_benchmark_targets(run_configs, execution_mode="parallel"):
 
     Returns:
         list[dict]: One result per target, in run_configs order, each with 'model',
-            'version', 'status' and 'runtime_seconds'.
+            'version', 'status', 'runtime_seconds', 'total_runtime_seconds' and
+            'step_timings' (see _run_target).
     """
     if execution_mode == "sequential":
         return [_run_target(entry) for entry in run_configs]
