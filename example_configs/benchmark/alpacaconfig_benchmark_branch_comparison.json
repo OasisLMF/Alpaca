@@ -1,15 +1,18 @@
 {
     "AWS_REGION": "eu-west-1",
     "AMI_ID": "ami-09079da11cd2861fa",
-    "INSTANCE_TYPE": "t3.medium",
+    "INSTANCE_TYPE": "t3.large",
     "SECURITY_GROUP_ID": "sg-00481e92cab2bbd2a",
     "SUBNET_ID": "subnet-b5eaa8c3",
     "IAM_INSTANCE_PROFILE": "IAM_INSTANCE_PROFILE",
-    "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-    "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
+    "REPO_LOCATIONS": [
+        "https://github.com/OasisLMF/OasisPiWind"
+    ],
     "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
-    "OASISLMF_BRANCH": "stable/2.5.x",
-    "OASISLMF_BRANCH_COMPARISON": "stable/2.4.x",
+    "OASISLMF_BRANCHES": [
+        "stable/2.5.x",
+        "stable/2.4.x"
+    ],
     "EXECUTION_MODE": "parallel",
     "AWS_PROFILE": "oasis"
 }

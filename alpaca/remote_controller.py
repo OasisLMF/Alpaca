@@ -1,6 +1,6 @@
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from alpaca.utils import remove_start, _download_results
-from alpaca.scripts import (
+from alpaca.commands import (
     download_from_github_commands, download_from_s3_commands, upload_to_s3_commands, setup_python_commands, model_requirements_commands
 )
 import json

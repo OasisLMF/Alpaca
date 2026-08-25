@@ -4,9 +4,9 @@ AWS_PROFILE = ("AWS_PROFILE", "Named AWS CLI profile to use for AWS calls and th
 AWS_REGION = ("AWS_REGION", "region of EC2 instance to create", "eu-west-1")
 BENCHMARK_BUCKET = (
     "BENCHMARK_BUCKET",
-    "S3 bucket (s3://bucket-name) storing versioned OasisLMF baseline outputs and performance metrics. In "
-    "single-run mode (REPO_LOCATION_COMPARISON omitted), used to fetch OASISLMF_VERSION_COMPARISON's stored "
-    "baseline for comparison, and/or as the publish target for PUBLISH_BASELINE",
+    "S3 bucket (s3://bucket-name) storing versioned OasisLMF baseline outputs and performance metrics. Any "
+    "OASISLMF_VERSIONS entry already stored there is taken from the bucket instead of being run on EC2, and it "
+    "is the publish target for PUBLISH_BASELINE",
     ""
 )
 COMPARISON_TOLERANCE = (
@@ -36,34 +36,27 @@ INSTANCE_TYPE = ("INSTANCE_TYPE", "Server configuration, amount of resources:", 
 LOG_LEVEL = ("LOG_LEVEL", "Verbosity of logging", "INFO")
 MAX_LIFETIME_HOURS = ("MAX_LIFETIME_HOURS", "Max lifetime of EC2 instance in hours", "2")
 OASISLMF_BRANCH = ("OASISLMF_BRANCH", "Branch of the OasisLMF repo to install from source, used in place of OASISLMF_VERSION", "")
-OASISLMF_BRANCH_COMPARISON = (
-    "OASISLMF_BRANCH_COMPARISON",
-    "Branch of the OasisLMF repo to install from source on the comparison target, used in place of "
-    "OASISLMF_VERSION_COMPARISON. Only applies in dual-target benchmark mode (REPO_LOCATION_COMPARISON set) - "
-    "there is no comparison-target equivalent in single-run mode",
-    ""
-)
+OASISLMF_BRANCHES = ("OASISLMF_BRANCHES", "JSON array of OasisLMF branches to benchmark, one target each, replaces OASISLMF_BRANCH", [])
 OASISLMF_VERSION = ("OASISLMF_VERSION", "Specific version of OasisLMF to use", "")
-OASISLMF_VERSION_COMPARISON = ("OASISLMF_VERSION_COMPARISON", "Specific version of OasisLMF to benchmark against", "")
+OASISLMF_VERSIONS = ("OASISLMF_VERSIONS", "JSON array of OasisLMF versions to benchmark, one target each, replaces OASISLMF_VERSION", [])
 PATH_TO_DOCKER_COMPOSE = ("PATH_TO_DOCKER_COMPOSE", "Path from base of REPO_LOCATION to docker-compose file (or bash script)",
                           "./docker-compose.yml")
 PATH_TO_OASISLMF_JSON = ("PATH_TO_OASISLMF_JSON", "Path from base of REPO_LOCATION to OASISLMF.JSON file", "./oasislmf.json")
 PUBLISH_BASELINE = (
     "PUBLISH_BASELINE",
-    "When 'True' and BENCHMARK_BUCKET is set, publish this run's OasisLMF output and performance metrics to "
-    "BENCHMARK_BUCKET under OASISLMF_VERSION as that version's new stored baseline (single-run mode only, "
-    "requires a specific OASISLMF_VERSION rather than 'latest')",
+    "When 'True' and BENCHMARK_BUCKET is set, publish each version target's output and performance metrics to "
+    "BENCHMARK_BUCKET as that version's new stored baseline, and run every version live rather than reusing a "
+    "stored one (branch targets are skipped, having no version to publish under)",
     "False"
 )
 PYTEST_ARGS = ("PYTEST_ARGS", "Arguments to pass to PyTest (already uses -vv flag)", "")
 REPO_LOCATION = ("REPO_LOCATION", "S3 location (s3://bucket) or link to GitHub repo (https://github.com/name/repo) with data",
                  "https://github.com/OasisLMF/OasisPiWind")
-REPO_LOCATION_COMPARISON = (
-    "REPO_LOCATION_COMPARISON",
-    "S3 location (s3://bucket) or link to GitHub repo (https://github.com/name/repo) to benchmark against. "
-    "Omit for single-run mode, where only REPO_LOCATION runs and OASISLMF_VERSION_COMPARISON (if set) is "
-    "instead fetched from BENCHMARK_BUCKET",
-    ""
+REPO_LOCATIONS = (
+    "REPO_LOCATIONS",
+    "JSON array of model locations to benchmark, each run at every OASISLMF_VERSIONS/OASISLMF_BRANCHES entry "
+    "(benchmark mode)",
+    ["https://github.com/OasisLMF/OasisPiWind"]
 )
 RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket) or local (./path/to/local)", "./runs")
 SECURITY_GROUP_ID = ("SECURITY_GROUP_ID", "Security group id of EC2 instance", "MySecurityGroup")

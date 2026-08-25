@@ -1,5 +1,5 @@
 from alpaca.pytest.utils import REQUIRED_CONFIG_PYTEST, OPTIONAL_CONFIG_PYTEST
-from alpaca.pytest.scripts import run_pytest_commands
+from alpaca.pytest.commands import run_pytest_commands
 from alpaca.remote_controller import RemoteController
 
 

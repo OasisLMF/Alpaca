@@ -1,4 +1,4 @@
-from alpaca.model.scripts import model_run_commands
+from alpaca.model.commands import model_run_commands
 
 
 def test_model_run_commands_runs_oasislmf():

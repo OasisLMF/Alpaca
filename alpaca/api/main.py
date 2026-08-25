@@ -1,4 +1,4 @@
-from alpaca.api.scripts import api_run_commands, docker_install_commands, deploy_oasis_server_commands, wait_for_oasis_server_commands
+from alpaca.api.commands import api_run_commands, docker_install_commands, deploy_oasis_server_commands, wait_for_oasis_server_commands
 from alpaca.api.utils import REQUIRED_CONFIG_API, OPTIONAL_CONFIG_API
 from alpaca.remote_controller import RemoteController
 

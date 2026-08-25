@@ -1,5 +1,5 @@
 from alpaca.api.main import main
-from alpaca.api.scripts import api_run_commands, docker_install_commands, deploy_oasis_server_commands, wait_for_oasis_server_commands
+from alpaca.api.commands import api_run_commands, docker_install_commands, deploy_oasis_server_commands, wait_for_oasis_server_commands
 from unittest import mock
 
 

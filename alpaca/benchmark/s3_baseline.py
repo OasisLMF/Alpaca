@@ -1,4 +1,5 @@
 from alpaca.benchmark.comparison import find_output_dir
+from alpaca.benchmark.scripts import benchmark_locations
 from alpaca.benchmark.timing import find_result_file
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from botocore.exceptions import ClientError
@@ -61,44 +62,91 @@ def _s3_client(config):
     return session.client("s3")
 
 
+def publishing_baseline(config):
+    """Report whether this benchmark publishes its targets as stored baselines.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Returns:
+        bool: True if PUBLISH_BASELINE is set to 'True'.
+    """
+    return str(config.get("PUBLISH_BASELINE", "False")).lower() == "true"
+
+
 def validate_s3_baseline_config(config):
     """Validate BENCHMARK_BUCKET/PUBLISH_BASELINE combinations before any EC2 spend.
-
-    Single-run mode (no REPO_LOCATION_COMPARISON) is the only mode these keys affect;
-    if they're set alongside a dual-target run they're logged and ignored rather than
-    raising, since a dual run's own live comparison target makes them redundant, not
-    invalid.
 
     Args:
         config: Validated benchmark configuration dictionary.
 
     Raises:
-        OasisAlpacaConfigError: If PUBLISH_BASELINE is set without BENCHMARK_BUCKET or a
-            concrete OASISLMF_VERSION, or if OASISLMF_VERSION_COMPARISON is set in
-            single-run mode without BENCHMARK_BUCKET.
+        OasisAlpacaConfigError: If PUBLISH_BASELINE is set without BENCHMARK_BUCKET, or
+            without any OASISLMF_VERSIONS entry to publish under, since a baseline is stored
+            under a version and a branch target hasn't got one.
     """
-    single_run_mode = not config.get("REPO_LOCATION_COMPARISON")
-    publish_baseline = str(config.get("PUBLISH_BASELINE", "False")).lower() == "true"
-    bucket = config.get("BENCHMARK_BUCKET")
-
-    if not single_run_mode:
-        if bucket or publish_baseline:
-            logger.warning(
-                "BENCHMARK_BUCKET/PUBLISH_BASELINE only apply in single-run mode (no "
-                "REPO_LOCATION_COMPARISON); ignoring them for this dual-target run"
-            )
+    if not publishing_baseline(config):
         return
 
-    if publish_baseline:
-        if not bucket:
-            raise OasisAlpacaConfigError("PUBLISH_BASELINE requires BENCHMARK_BUCKET to be set")
-        if not config.get("OASISLMF_VERSION"):
-            raise OasisAlpacaConfigError("PUBLISH_BASELINE requires a specific OASISLMF_VERSION, not 'latest'")
+    if not config.get("BENCHMARK_BUCKET"):
+        raise OasisAlpacaConfigError("PUBLISH_BASELINE requires BENCHMARK_BUCKET to be set")
+    if not config.get("OASISLMF_VERSIONS"):
+        raise OasisAlpacaConfigError("PUBLISH_BASELINE requires OASISLMF_VERSIONS entries, as a branch has no version to publish under")
 
-    if config.get("OASISLMF_VERSION_COMPARISON") and not bucket:
-        raise OasisAlpacaConfigError(
-            "OASISLMF_VERSION_COMPARISON requires BENCHMARK_BUCKET when REPO_LOCATION_COMPARISON is omitted"
+
+def resolve_stored_versions(config):
+    """Find which of a benchmark's versions already have a stored baseline to reuse.
+
+    A version whose baseline is already in BENCHMARK_BUCKET doesn't need an EC2 run: the
+    stored output and performance metrics stand in for it. Baselines are keyed by version
+    alone, so this only applies when the benchmark runs a single model location - with more
+    than one, the same stored output would be reused for every location and the comparison
+    would be meaningless. PUBLISH_BASELINE also opts out, since republishing a version means
+    running it rather than reusing what's already there.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Returns:
+        set[str]: The OASISLMF_VERSIONS entries with a stored baseline output in
+            BENCHMARK_BUCKET, empty when there's nothing to reuse.
+    """
+    bucket = config.get("BENCHMARK_BUCKET")
+    versions = config.get("OASISLMF_VERSIONS") or []
+    if not bucket or not versions:
+        return set()
+
+    if publishing_baseline(config):
+        logger.info("PUBLISH_BASELINE is set, so every version target runs rather than reusing a stored baseline")
+        return set()
+    if len(benchmark_locations(config)) > 1:
+        logger.warning(
+            "Stored baselines are keyed by OasisLMF version only, so they can't be told apart per model; "
+            "running every version live because REPO_LOCATIONS holds more than one location"
         )
+        return set()
+
+    client = _s3_client(config)
+    stored = {version for version in versions if _baseline_exists(client, bucket, version)}
+    for version in stored:
+        logger.info(f"Reusing the stored {version} baseline from {bucket} instead of running it")
+    return stored
+
+
+def _baseline_exists(client, bucket_uri, version):
+    """Check whether a version has stored baseline output in a bucket.
+
+    Args:
+        client: boto3 S3 client, see _s3_client.
+        bucket_uri: S3 bucket URI the baselines are stored under.
+        version: OasisLMF version to look for.
+
+    Returns:
+        bool: True if any object exists under that version's 'output/' prefix.
+    """
+    bucket, version_prefix = _version_prefix(bucket_uri, version)
+    listing = client.list_objects_v2(Bucket=bucket, Prefix=f"{version_prefix}/output/", MaxKeys=1)
+    return bool(listing.get("KeyCount"))
 
 
 def upload_baseline(bucket_uri, version, result_directory, config):
@@ -108,7 +156,7 @@ def upload_baseline(bucket_uri, version, result_directory, config):
         bucket_uri: S3 bucket URI (e.g. 's3://alpaca-benchmark') to publish under.
         version: OasisLMF version this run's results represent.
         result_directory: Local directory the target's results were downloaded to (a
-            RESULT_DIRECTORY from build_model_run_configs).
+            RESULT_DIRECTORY from build_benchmark_targets).
         config: Validated benchmark configuration dictionary, for AWS session settings.
 
     Raises:
