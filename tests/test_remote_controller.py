@@ -1,6 +1,6 @@
 from alpaca.remote_controller import RemoteController
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
-from alpaca.scripts import (
+from alpaca.commands import (
     setup_python_commands, download_from_github_commands, download_from_s3_commands, model_requirements_commands,
     upload_to_s3_commands
 )

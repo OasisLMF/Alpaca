@@ -1,4 +1,4 @@
-from alpaca.pytest.scripts import run_pytest_commands
+from alpaca.pytest.commands import run_pytest_commands
 from unittest import mock
 
 
@@ -58,7 +58,7 @@ def test_run_pytest_with_empty_args():
     assert runs_pytest
 
 
-@mock.patch("alpaca.pytest.scripts.get_timestamp")
+@mock.patch("alpaca.pytest.commands.get_timestamp")
 def test_run_pytest_saves_to_correct_location(mock_timestamp):
     """Test that run_pytest_commands uses timestamp and location for log file name."""
     mock_timestamp.return_value = "timestamp"

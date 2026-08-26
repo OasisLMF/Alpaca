@@ -1,17 +1,17 @@
 from alpaca.benchmark.utils import REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK
 from alpaca.inputs import (
-    REPO_LOCATION, REPO_LOCATION_COMPARISON, OASISLMF_VERSION, OASISLMF_VERSION_COMPARISON, BENCHMARK_BUCKET,
-    PUBLISH_BASELINE, OASISLMF_BRANCH, OASISLMF_BRANCH_COMPARISON
+    REPO_LOCATION, REPO_LOCATIONS, OASISLMF_VERSION, OASISLMF_VERSIONS, BENCHMARK_BUCKET, PUBLISH_BASELINE,
+    OASISLMF_BRANCH, OASISLMF_BRANCHES
 )
 
 
-def test_required_config_benchmark_includes_primary_repo_location():
-    """Test that the primary repo location is required, but the comparison one is not,
-    since its absence is what selects single-run mode.
+def test_required_config_benchmark_requires_the_model_locations():
+    """Test that a benchmark is configured with a list of locations rather than the single
+    REPO_LOCATION the other run modes take.
     """
-    assert REPO_LOCATION in REQUIRED_CONFIG_BENCHMARK
-    assert REPO_LOCATION_COMPARISON not in REQUIRED_CONFIG_BENCHMARK
-    assert REPO_LOCATION_COMPARISON in OPTIONAL_CONFIG_BENCHMARK
+    assert REPO_LOCATIONS in REQUIRED_CONFIG_BENCHMARK
+    assert REPO_LOCATION not in REQUIRED_CONFIG_BENCHMARK
+    assert REPO_LOCATION not in OPTIONAL_CONFIG_BENCHMARK
 
 
 def test_optional_config_benchmark_includes_s3_baseline_keys():
@@ -20,16 +20,22 @@ def test_optional_config_benchmark_includes_s3_baseline_keys():
     assert PUBLISH_BASELINE in OPTIONAL_CONFIG_BENCHMARK
 
 
-def test_optional_config_benchmark_includes_both_oasislmf_versions():
-    """Test that both the primary and comparison OasisLMF versions are optional."""
-    assert OASISLMF_VERSION in OPTIONAL_CONFIG_BENCHMARK
-    assert OASISLMF_VERSION_COMPARISON in OPTIONAL_CONFIG_BENCHMARK
+def test_optional_config_benchmark_takes_lists_of_versions_and_branches():
+    """Test that a benchmark takes the plural version/branch keys, and that the singular
+    ones are gone, since every target now comes from the lists.
+    """
+    assert OASISLMF_VERSIONS in OPTIONAL_CONFIG_BENCHMARK
+    assert OASISLMF_BRANCHES in OPTIONAL_CONFIG_BENCHMARK
+    assert OASISLMF_VERSION not in OPTIONAL_CONFIG_BENCHMARK
+    assert OASISLMF_BRANCH not in OPTIONAL_CONFIG_BENCHMARK
 
 
-def test_optional_config_benchmark_includes_both_oasislmf_branches():
-    """Test that both the primary and comparison OasisLMF branches are optional."""
-    assert OASISLMF_BRANCH in OPTIONAL_CONFIG_BENCHMARK
-    assert OASISLMF_BRANCH_COMPARISON in OPTIONAL_CONFIG_BENCHMARK
+def test_list_config_keys_declare_list_defaults():
+    """Test that the list-valued keys declare themselves as lists, which is what makes
+    alpaca.config parse them as JSON arrays.
+    """
+    for key in (REPO_LOCATIONS, OASISLMF_VERSIONS, OASISLMF_BRANCHES):
+        assert isinstance(key[2], list)
 
 
 def test_required_and_optional_config_benchmark_do_not_overlap():

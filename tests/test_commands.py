@@ -1,4 +1,4 @@
-from alpaca.scripts import (
+from alpaca.commands import (
     setup_python_commands,
     oasislmf_install_commands,
     download_from_s3_commands,

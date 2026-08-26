@@ -1,14 +1,18 @@
 from alpaca.benchmark.scripts import (
-    model_name_from_location, build_benchmark_plan, build_execution_plan, build_model_run_configs, format_benchmark_plan
+    LIVE_SOURCE, STORED_SOURCE, benchmark_locations, build_benchmark_plan, build_benchmark_targets,
+    format_benchmark_plan, model_name_from_location, oasislmf_sources, resolve_execution_mode
 )
 from alpaca.exceptions import OasisAlpacaConfigError
 
-import logging
 import pytest
 
 
+PIWIND = "https://github.com/OasisLMF/OasisPiWind"
+LEAGUE = "https://github.com/OasisLMF/OasisLeague"
+
+
 def test_model_name_from_location_strips_oasis_prefix_for_github():
-    assert model_name_from_location("https://github.com/OasisLMF/OasisPiWind") == "PiWind"
+    assert model_name_from_location(PIWIND) == "PiWind"
 
 
 def test_model_name_from_location_keeps_non_oasis_github_repo_name():
@@ -23,138 +27,91 @@ def test_model_name_from_location_strips_trailing_slash_for_s3():
     assert model_name_from_location("s3://bucket/path/to/model/") == "model"
 
 
-def test_build_benchmark_plan_dedupes_identical_models():
-    config = {
-        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
-        "OASISLMF_VERSION": "2.4.9",
-        "OASISLMF_VERSION_COMPARISON": "2.3.3",
-    }
-    plan = build_benchmark_plan(config)
-    assert plan["models"] == ["PiWind"]
-    assert plan["comparisons"] == ["OasisLMF 2.4.9", "OasisLMF 2.3.3"]
-    assert plan["execution_mode"] == "parallel"
+def test_benchmark_locations_dedupes_repeated_locations():
+    """Listing the same model twice shouldn't run it twice."""
+    assert benchmark_locations({"REPO_LOCATIONS": [PIWIND, PIWIND, LEAGUE]}) == [PIWIND, LEAGUE]
 
 
-def test_build_benchmark_plan_single_run_mode_omits_comparison_model():
-    """Test that a config without REPO_LOCATION_COMPARISON only lists the one model."""
-    config = {"REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind", "OASISLMF_VERSION": "2.5.6"}
-    plan = build_benchmark_plan(config)
-    assert plan["models"] == ["PiWind"]
-    assert plan["comparisons"] == ["OasisLMF 2.5.6"]
+def test_benchmark_locations_allows_a_single_location():
+    assert benchmark_locations({"REPO_LOCATIONS": [PIWIND]}) == [PIWIND]
 
 
-def test_build_benchmark_plan_single_run_mode_labels_s3_baseline():
-    """Test that an S3-sourced comparison version is labelled distinctly from a live one."""
-    config = {
-        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-        "OASISLMF_VERSION": "2.5.6",
-        "OASISLMF_VERSION_COMPARISON": "2.5.4",
-        "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
-    }
-    plan = build_benchmark_plan(config)
-    assert plan["comparisons"] == ["OasisLMF 2.5.6", "OasisLMF 2.5.4 (S3 baseline)"]
+def test_benchmark_locations_returns_empty_when_unset():
+    assert benchmark_locations({}) == []
 
 
-def test_build_benchmark_plan_labels_single_run_mode_branch():
-    """Test that OASISLMF_BRANCH is reflected in the plan instead of misleadingly
-    falling back to 'OasisLMF latest' when no OASISLMF_VERSION is set.
+def test_benchmark_locations_returns_empty_for_an_empty_list():
+    assert benchmark_locations({"REPO_LOCATIONS": []}) == []
+
+
+def test_benchmark_locations_ignores_blank_entries():
+    assert benchmark_locations({"REPO_LOCATIONS": ["", PIWIND]}) == [PIWIND]
+
+
+def test_oasislmf_sources_lists_versions_then_branches():
+    sources = oasislmf_sources({"OASISLMF_VERSIONS": ["2.5.6", "2.4.9"], "OASISLMF_BRANCHES": ["stable/2.5.x"]})
+
+    assert sources == [(None, "2.5.6"), (None, "2.4.9"), ("stable/2.5.x", None)]
+
+
+def test_oasislmf_sources_dedupes_repeated_entries():
+    assert oasislmf_sources({"OASISLMF_VERSIONS": ["2.5.6", "2.5.6"]}) == [(None, "2.5.6")]
+
+
+def test_oasislmf_sources_allows_a_single_version():
+    """One entry is a valid benchmark: it still gets timed, and can be diffed against a
+    stored baseline.
     """
-    config = {"REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind", "OASISLMF_BRANCH": "my-feature-branch"}
-    plan = build_benchmark_plan(config)
-    assert plan["comparisons"] == ["OasisLMF branch:my-feature-branch"]
+    assert oasislmf_sources({"OASISLMF_VERSIONS": ["2.5.6"]}) == [(None, "2.5.6")]
 
 
-def test_build_benchmark_plan_scopes_branch_independently_per_target():
-    """Test that OASISLMF_BRANCH only labels the baseline target, and does not leak onto
-    the comparison target when OASISLMF_BRANCH_COMPARISON isn't also set.
+def test_oasislmf_sources_allows_a_single_branch():
+    assert oasislmf_sources({"OASISLMF_BRANCHES": ["stable/2.5.x"]}) == [("stable/2.5.x", None)]
+
+
+def test_oasislmf_sources_allows_versions_with_no_branches():
+    """Either key on its own is enough; the other can be absent or an empty list."""
+    assert oasislmf_sources({"OASISLMF_VERSIONS": ["2.5.6"], "OASISLMF_BRANCHES": []}) == [(None, "2.5.6")]
+
+
+def test_oasislmf_sources_allows_branches_with_no_versions():
+    assert oasislmf_sources({"OASISLMF_VERSIONS": [], "OASISLMF_BRANCHES": ["main"]}) == [("main", None)]
+
+
+def test_oasislmf_sources_raises_when_nothing_is_pinned():
+    """Nothing to install is a config error, not a quiet run against whatever PyPI's latest
+    release happens to be that day.
     """
-    config = {
-        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
-        "OASISLMF_BRANCH": "my-feature-branch",
-        "OASISLMF_VERSION_COMPARISON": "2.4.9",
-    }
-    plan = build_benchmark_plan(config)
-    assert plan["comparisons"] == ["OasisLMF branch:my-feature-branch", "OasisLMF 2.4.9"]
-
-
-def test_build_benchmark_plan_labels_both_branches_when_both_set():
-    """Test that two different branches can be benchmarked against each other in one
-    dual-target run, each shown with its own label.
-    """
-    config = {
-        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
-        "OASISLMF_BRANCH": "stable/2.3.x",
-        "OASISLMF_BRANCH_COMPARISON": "stable/2.4.x",
-    }
-    plan = build_benchmark_plan(config)
-    assert plan["comparisons"] == ["OasisLMF branch:stable/2.3.x", "OasisLMF branch:stable/2.4.x"]
-
-
-def test_build_benchmark_plan_warns_when_branch_comparison_set_in_single_run_mode(caplog):
-    """Test that OASISLMF_BRANCH_COMPARISON is a no-op (with a warning) in single-run
-    mode, since there's no second live target for it to apply to.
-    """
-    config = {"REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind", "OASISLMF_BRANCH_COMPARISON": "stable/2.4.x"}
-    with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.scripts"):
-        plan = build_benchmark_plan(config)
-    assert plan["comparisons"] == ["OasisLMF latest"]
-    assert "only applies in dual-target mode" in caplog.text
-
-
-def test_build_benchmark_plan_lists_both_models_when_different():
-    config = {
-        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisLeague",
-    }
-    plan = build_benchmark_plan(config)
-    assert plan["models"] == ["PiWind", "League"]
-
-
-def test_build_benchmark_plan_defaults_missing_versions_to_latest():
-    config = {
-        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
-    }
-    plan = build_benchmark_plan(config)
-    assert plan["comparisons"] == ["OasisLMF latest", "OasisLMF latest"]
-
-
-def test_build_benchmark_plan_respects_configured_execution_mode():
-    config = {
-        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
-        "EXECUTION_MODE": "sequential",
-    }
-    plan = build_benchmark_plan(config)
-    assert plan["execution_mode"] == "sequential"
-
-
-def test_build_benchmark_plan_raises_on_invalid_execution_mode():
-    config = {
-        "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-        "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
-        "EXECUTION_MODE": "sideways",
-    }
     with pytest.raises(OasisAlpacaConfigError):
-        build_benchmark_plan(config)
+        oasislmf_sources({})
 
 
-def test_build_execution_plan_matches_documented_shape():
-    config = {"OASISLMF_VERSION": "2.3.3", "OASISLMF_VERSION_COMPARISON": "2.4.9"}
-    assert build_execution_plan(config) == {
-        "baseline": {"version": "2.3.3"},
-        "comparison": {"version": "2.4.9"},
-    }
+def test_oasislmf_sources_raises_when_both_lists_are_empty():
+    with pytest.raises(OasisAlpacaConfigError):
+        oasislmf_sources({"OASISLMF_VERSIONS": [], "OASISLMF_BRANCHES": []})
 
 
-def test_build_execution_plan_defaults_missing_versions_to_latest():
-    assert build_execution_plan({}) == {
-        "baseline": {"version": "latest"},
-        "comparison": {"version": "latest"},
-    }
+def test_oasislmf_sources_ignores_blank_entries():
+    """A blank entry would otherwise become a target with no version to install."""
+    assert oasislmf_sources({"OASISLMF_VERSIONS": ["", "2.5.6"], "OASISLMF_BRANCHES": [""]}) == [(None, "2.5.6")]
+
+
+def test_oasislmf_sources_raises_when_every_entry_is_blank():
+    with pytest.raises(OasisAlpacaConfigError):
+        oasislmf_sources({"OASISLMF_VERSIONS": [""]})
+
+
+def test_resolve_execution_mode_defaults_to_parallel():
+    assert resolve_execution_mode({}) == "parallel"
+
+
+def test_resolve_execution_mode_reads_configured_mode():
+    assert resolve_execution_mode({"EXECUTION_MODE": "sequential"}) == "sequential"
+
+
+def test_resolve_execution_mode_raises_on_invalid_mode():
+    with pytest.raises(OasisAlpacaConfigError):
+        resolve_execution_mode({"EXECUTION_MODE": "sideways"})
 
 
 BASE_BENCHMARK_CONFIG = {
@@ -163,34 +120,47 @@ BASE_BENCHMARK_CONFIG = {
     "SUBNET_ID": "subnet-1",
     "IAM_INSTANCE_PROFILE": "profile",
     "PATH_TO_OASISLMF_JSON": "./oasislmf.json",
-    "REPO_LOCATION": "https://github.com/OasisLMF/OasisPiWind",
-    "REPO_LOCATION_COMPARISON": "https://github.com/OasisLMF/OasisPiWind",
-    "OASISLMF_VERSION": "2.3.3",
-    "OASISLMF_VERSION_COMPARISON": "2.4.9",
+    "REPO_LOCATIONS": [PIWIND],
+    "OASISLMF_VERSIONS": ["2.3.3", "2.4.9"],
 }
 
 
-def test_build_model_run_configs_returns_baseline_then_comparison():
-    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
+def test_build_benchmark_targets_returns_one_target_per_version():
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG)
 
-    assert [entry["label"] for entry in run_configs] == ["baseline", "comparison"]
-    assert [entry["model"] for entry in run_configs] == ["PiWind", "PiWind"]
-    assert [entry["version"] for entry in run_configs] == ["2.3.3", "2.4.9"]
-
-
-def test_build_model_run_configs_sets_distinct_version_per_target():
-    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
-
-    baseline, comparison = run_configs
-    assert baseline["run_config"]["OASISLMF_VERSION"] == "2.3.3"
-    assert comparison["run_config"]["OASISLMF_VERSION"] == "2.4.9"
+    assert [target["version"] for target in targets] == ["2.3.3", "2.4.9"]
+    assert [target["model"] for target in targets] == ["PiWind", "PiWind"]
+    assert [target["source"] for target in targets] == [LIVE_SOURCE, LIVE_SOURCE]
 
 
-def test_build_model_run_configs_carries_over_shared_keys():
-    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
+def test_build_benchmark_targets_crosses_every_location_with_every_version():
+    """Two locations and two versions benchmark all four combinations, location by location."""
+    config = {**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": [PIWIND, LEAGUE]}
+    targets = build_benchmark_targets(config)
 
-    for entry in run_configs:
-        run_config = entry["run_config"]
+    assert [(target["model"], target["version"]) for target in targets] == [
+        ("PiWind", "2.3.3"), ("PiWind", "2.4.9"), ("League", "2.3.3"), ("League", "2.4.9"),
+    ]
+
+
+def test_build_benchmark_targets_sets_distinct_version_per_target():
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG)
+
+    assert [target["run_config"]["OASISLMF_VERSION"] for target in targets] == ["2.3.3", "2.4.9"]
+
+
+def test_build_benchmark_targets_gives_each_target_its_own_location():
+    config = {**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": [PIWIND, LEAGUE], "OASISLMF_VERSIONS": ["2.4.9"]}
+    targets = build_benchmark_targets(config)
+
+    assert [target["run_config"]["REPO_LOCATION"] for target in targets] == [PIWIND, LEAGUE]
+
+
+def test_build_benchmark_targets_carries_over_shared_keys():
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG)
+
+    for target in targets:
+        run_config = target["run_config"]
         assert run_config["AMI_ID"] == "ami-1"
         assert run_config["SECURITY_GROUP_ID"] == "sg-1"
         assert run_config["SUBNET_ID"] == "subnet-1"
@@ -198,123 +168,217 @@ def test_build_model_run_configs_carries_over_shared_keys():
         assert run_config["PATH_TO_OASISLMF_JSON"] == "./oasislmf.json"
 
 
-def test_build_model_run_configs_uses_separate_result_directories():
-    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
+def test_build_benchmark_targets_uses_separate_result_directories():
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG)
 
-    baseline, comparison = run_configs
-    assert baseline["run_config"]["RESULT_DIRECTORY"] == "./runs/baseline"
-    assert comparison["run_config"]["RESULT_DIRECTORY"] == "./runs/comparison"
-    assert baseline["run_config"]["RESULT_DIRECTORY"] != comparison["run_config"]["RESULT_DIRECTORY"]
+    directories = [target["run_config"]["RESULT_DIRECTORY"] for target in targets]
+    assert directories == ["./runs/PiWind-2.3.3", "./runs/PiWind-2.4.9"]
 
 
-def test_build_model_run_configs_sets_independent_branch_per_target():
-    """Test that OASISLMF_BRANCH and OASISLMF_BRANCH_COMPARISON install different
-    branches on their own target, with no fallback to one another.
-    """
+def test_build_benchmark_targets_respects_configured_result_directory():
+    config = {**BASE_BENCHMARK_CONFIG, "RESULT_DIRECTORY": "s3://bucket/results"}
+    targets = build_benchmark_targets(config)
+
+    assert targets[0]["run_config"]["RESULT_DIRECTORY"] == "s3://bucket/results/PiWind-2.3.3"
+
+
+def test_build_benchmark_targets_makes_result_directories_path_safe():
+    """A branch name carries slashes, which can't go straight into a directory name."""
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_VERSIONS": [], "OASISLMF_BRANCHES": ["stable/2.4.x"]}
+    targets = build_benchmark_targets(config)
+
+    assert targets[0]["run_config"]["RESULT_DIRECTORY"] == "./runs/PiWind-branch-stable-2.4.x"
+
+
+def test_build_benchmark_targets_disambiguates_shared_result_directories():
+    """Two locations can share a model name, and must still not share an output directory."""
+    config = {**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": [PIWIND, "s3://bucket/PiWind"], "OASISLMF_VERSIONS": ["2.4.9"]}
+    targets = build_benchmark_targets(config)
+
+    directories = [target["run_config"]["RESULT_DIRECTORY"] for target in targets]
+    assert directories == ["./runs/PiWind-2.4.9", "./runs/PiWind-2.4.9-2"]
+
+
+def test_build_benchmark_targets_sets_a_branch_per_target():
     config = {
         **BASE_BENCHMARK_CONFIG,
-        "OASISLMF_BRANCH": "stable/2.3.x",
-        "OASISLMF_BRANCH_COMPARISON": "stable/2.4.x",
+        "OASISLMF_VERSIONS": [],
+        "OASISLMF_BRANCHES": ["stable/2.3.x", "stable/2.4.x"],
     }
-    run_configs = build_model_run_configs(config)
+    targets = build_benchmark_targets(config)
 
-    baseline, comparison = run_configs
-    assert baseline["run_config"]["OASISLMF_BRANCH"] == "stable/2.3.x"
-    assert comparison["run_config"]["OASISLMF_BRANCH"] == "stable/2.4.x"
-    assert baseline["version"] == "branch:stable/2.3.x"
-    assert comparison["version"] == "branch:stable/2.4.x"
+    assert [target["run_config"]["OASISLMF_BRANCH"] for target in targets] == ["stable/2.3.x", "stable/2.4.x"]
+    assert [target["version"] for target in targets] == ["branch:stable/2.3.x", "branch:stable/2.4.x"]
 
 
-def test_build_model_run_configs_branch_omits_version_from_run_config():
-    """Test that a branch-driven target doesn't also carry its OASISLMF_VERSION, since
-    the branch already takes priority at install time and a leftover version would be
-    misleading in the run_config.
+def test_build_benchmark_targets_branch_omits_version_from_run_config():
+    """Test that a branch-driven target doesn't also carry a version, since the branch
+    already takes priority at install time and a leftover version would be misleading.
     """
-    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_BRANCH": "stable/2.3.x"}
-    run_configs = build_model_run_configs(config)
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_VERSIONS": [], "OASISLMF_BRANCHES": ["stable/2.3.x"]}
+    targets = build_benchmark_targets(config)
 
-    baseline = run_configs[0]
-    assert "OASISLMF_VERSION" not in baseline["run_config"]
-    assert baseline["run_config"]["OASISLMF_BRANCH"] == "stable/2.3.x"
-
-
-def test_build_model_run_configs_comparison_target_unaffected_by_baseline_branch():
-    """Test that OASISLMF_BRANCH set alone (no OASISLMF_BRANCH_COMPARISON) does not leak
-    onto the comparison target - it keeps installing its own OASISLMF_VERSION_COMPARISON.
-    """
-    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_BRANCH": "stable/2.3.x"}
-    run_configs = build_model_run_configs(config)
-
-    comparison = run_configs[1]
-    assert "OASISLMF_BRANCH" not in comparison["run_config"]
-    assert comparison["run_config"]["OASISLMF_VERSION"] == "2.4.9"
+    assert "OASISLMF_VERSION" not in targets[0]["run_config"]
+    assert targets[0]["run_config"]["OASISLMF_BRANCH"] == "stable/2.3.x"
 
 
-def test_build_model_run_configs_names_ec2_instances_by_model_and_version():
+def test_build_benchmark_targets_benchmarks_versions_and_branches_together():
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_VERSIONS": ["2.4.9"], "OASISLMF_BRANCHES": ["my-feature"]}
+    targets = build_benchmark_targets(config)
+
+    assert [target["version"] for target in targets] == ["2.4.9", "branch:my-feature"]
+    assert "OASISLMF_BRANCH" not in targets[0]["run_config"]
+    assert "OASISLMF_VERSION" not in targets[1]["run_config"]
+
+
+def test_build_benchmark_targets_names_ec2_instances_by_model_and_version():
     """Test that each target's EC2_NAME identifies its model and version, so concurrent
     instances are distinguishable in the AWS console.
     """
-    run_configs = build_model_run_configs(BASE_BENCHMARK_CONFIG)
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG)
 
-    baseline, comparison = run_configs
-    assert baseline["run_config"]["EC2_NAME"] == "Alpaca PiWind 2.3.3"
-    assert comparison["run_config"]["EC2_NAME"] == "Alpaca PiWind 2.4.9"
+    assert [target["run_config"]["EC2_NAME"] for target in targets] == ["Alpaca PiWind 2.3.3", "Alpaca PiWind 2.4.9"]
 
 
-def test_build_model_run_configs_ec2_name_overrides_top_level_setting():
-    """Test that the derived per-target EC2_NAME takes priority over a top-level
-    EC2_NAME, since a single shared name would defeat the point of distinguishing
-    concurrent instances.
+def test_build_benchmark_targets_ec2_name_overrides_top_level_setting():
+    """Test that the derived per-target EC2_NAME takes priority over a top-level EC2_NAME,
+    since a single shared name would defeat the point of distinguishing concurrent instances.
     """
     config = {**BASE_BENCHMARK_CONFIG, "EC2_NAME": "MyCustomName"}
-    run_configs = build_model_run_configs(config)
+    targets = build_benchmark_targets(config)
 
-    for entry in run_configs:
-        assert entry["run_config"]["EC2_NAME"] != "MyCustomName"
-
-
-def test_build_model_run_configs_ec2_name_defaults_version_to_latest():
-    config = {key: value for key, value in BASE_BENCHMARK_CONFIG.items() if not key.startswith("OASISLMF_VERSION")}
-    run_configs = build_model_run_configs(config)
-
-    baseline, comparison = run_configs
-    assert baseline["run_config"]["EC2_NAME"] == "Alpaca PiWind latest"
-    assert comparison["run_config"]["EC2_NAME"] == "Alpaca PiWind latest"
+    for target in targets:
+        assert target["run_config"]["EC2_NAME"] != "MyCustomName"
 
 
-def test_build_model_run_configs_respects_configured_result_directory():
-    config = {**BASE_BENCHMARK_CONFIG, "RESULT_DIRECTORY": "s3://bucket/results"}
-    run_configs = build_model_run_configs(config)
+def test_build_benchmark_targets_builds_one_target_for_one_version():
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_VERSIONS": ["2.5.6"]}
+    targets = build_benchmark_targets(config)
 
-    baseline, comparison = run_configs
-    assert baseline["run_config"]["RESULT_DIRECTORY"] == "s3://bucket/results/baseline"
-    assert comparison["run_config"]["RESULT_DIRECTORY"] == "s3://bucket/results/comparison"
-
-
-def test_build_model_run_configs_omits_version_when_unset():
-    config = {key: value for key, value in BASE_BENCHMARK_CONFIG.items() if not key.startswith("OASISLMF_VERSION")}
-    run_configs = build_model_run_configs(config)
-
-    baseline, comparison = run_configs
-    assert "OASISLMF_VERSION" not in baseline["run_config"]
-    assert "OASISLMF_VERSION" not in comparison["run_config"]
-    assert baseline["version"] == "latest"
-    assert comparison["version"] == "latest"
+    assert len(targets) == 1
+    assert targets[0]["version"] == "2.5.6"
+    assert targets[0]["source_label"] == "OasisLMF 2.5.6"
+    assert targets[0]["run_config"]["EC2_NAME"] == "Alpaca PiWind 2.5.6"
+    assert targets[0]["run_config"]["OASISLMF_VERSION"] == "2.5.6"
 
 
-def test_build_model_run_configs_returns_single_target_without_comparison_repo():
-    """Test that omitting REPO_LOCATION_COMPARISON produces a single-run-mode target."""
-    config = {key: value for key, value in BASE_BENCHMARK_CONFIG.items() if not key.startswith("REPO_LOCATION_C")}
-    run_configs = build_model_run_configs(config)
+def test_build_benchmark_targets_raises_when_nothing_is_pinned():
+    config = {key: value for key, value in BASE_BENCHMARK_CONFIG.items() if key != "OASISLMF_VERSIONS"}
 
-    assert [entry["label"] for entry in run_configs] == ["baseline"]
-    assert run_configs[0]["run_config"]["RESULT_DIRECTORY"] == "./runs/baseline"
+    with pytest.raises(OasisAlpacaConfigError):
+        build_benchmark_targets(config)
+
+
+def test_build_benchmark_targets_names_ec2_instances_by_branch():
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_VERSIONS": [], "OASISLMF_BRANCHES": ["stable/2.4.x"]}
+    targets = build_benchmark_targets(config)
+
+    assert targets[0]["run_config"]["EC2_NAME"] == "Alpaca PiWind branch:stable/2.4.x"
+    assert targets[0]["source_label"] == "OasisLMF branch:stable/2.4.x"
+
+
+def test_build_benchmark_targets_strips_a_trailing_result_directory_slash():
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_VERSIONS": ["2.4.9"], "RESULT_DIRECTORY": "./runs/"}
+    targets = build_benchmark_targets(config)
+
+    assert targets[0]["run_config"]["RESULT_DIRECTORY"] == "./runs/PiWind-2.4.9"
+
+
+def test_build_benchmark_targets_disambiguates_three_way_result_directory_clashes():
+    config = {
+        **BASE_BENCHMARK_CONFIG,
+        "REPO_LOCATIONS": [PIWIND, "s3://bucket/PiWind", "s3://other-bucket/PiWind"],
+        "OASISLMF_VERSIONS": ["2.4.9"],
+    }
+    targets = build_benchmark_targets(config)
+
+    assert [target["label"] for target in targets] == ["PiWind-2.4.9", "PiWind-2.4.9-2", "PiWind-2.4.9-3"]
+
+
+def test_build_benchmark_targets_marks_stored_versions():
+    """A version already in the bucket is taken from there rather than run again."""
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={"2.4.9"})
+
+    assert [target["source"] for target in targets] == [LIVE_SOURCE, STORED_SOURCE]
+
+
+def test_build_benchmark_targets_never_marks_a_branch_as_stored():
+    """Baselines are stored per version, so a branch target always runs."""
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_VERSIONS": [], "OASISLMF_BRANCHES": ["stable/2.4.x"]}
+    targets = build_benchmark_targets(config, stored_versions={"stable/2.4.x"})
+
+    assert targets[0]["source"] == LIVE_SOURCE
+
+
+def test_build_benchmark_targets_ignores_stored_versions_it_is_not_running():
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={"9.9.9"})
+
+    assert [target["source"] for target in targets] == [LIVE_SOURCE, LIVE_SOURCE]
+
+
+def test_build_benchmark_targets_marks_a_stored_version_at_every_location():
+    """A location axis doesn't change which versions are already stored."""
+    config = {**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": [PIWIND, LEAGUE]}
+    targets = build_benchmark_targets(config, stored_versions={"2.4.9"})
+
+    assert [target["source"] for target in targets] == [LIVE_SOURCE, STORED_SOURCE, LIVE_SOURCE, STORED_SOURCE]
+
+
+def test_build_benchmark_targets_raises_without_any_location():
+    """An empty REPO_LOCATIONS has nothing to benchmark, and shouldn't read as a valid run."""
+    with pytest.raises(OasisAlpacaConfigError):
+        build_benchmark_targets({**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": []})
+
+
+def test_build_benchmark_plan_lists_each_model_once_and_every_target():
+    config = {**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": [PIWIND, PIWIND]}
+    plan = build_benchmark_plan(config, build_benchmark_targets(config))
+
+    assert plan["models"] == ["PiWind"]
+    assert plan["targets"] == ["PiWind: OasisLMF 2.3.3", "PiWind: OasisLMF 2.4.9"]
+    assert plan["execution_mode"] == "parallel"
+
+
+def test_build_benchmark_plan_lists_both_models_when_different():
+    config = {**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": [PIWIND, LEAGUE], "OASISLMF_VERSIONS": ["2.4.9"]}
+    plan = build_benchmark_plan(config, build_benchmark_targets(config))
+
+    assert plan["models"] == ["PiWind", "League"]
+
+
+def test_build_benchmark_plan_labels_branch_targets():
+    config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_VERSIONS": [], "OASISLMF_BRANCHES": ["my-feature-branch"]}
+    plan = build_benchmark_plan(config, build_benchmark_targets(config))
+
+    assert plan["targets"] == ["PiWind: OasisLMF branch:my-feature-branch"]
+
+
+def test_build_benchmark_plan_labels_stored_targets_distinctly():
+    """A target read from the bucket isn't a live run, and shouldn't read like one."""
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={"2.4.9"})
+    plan = build_benchmark_plan(BASE_BENCHMARK_CONFIG, targets)
+
+    assert plan["targets"] == ["PiWind: OasisLMF 2.3.3", "PiWind: OasisLMF 2.4.9 (S3 baseline)"]
+
+
+def test_build_benchmark_plan_respects_configured_execution_mode():
+    config = {**BASE_BENCHMARK_CONFIG, "EXECUTION_MODE": "sequential"}
+    plan = build_benchmark_plan(config, build_benchmark_targets(config))
+
+    assert plan["execution_mode"] == "sequential"
+
+
+def test_build_benchmark_plan_raises_on_invalid_execution_mode():
+    config = {**BASE_BENCHMARK_CONFIG, "EXECUTION_MODE": "sideways"}
+
+    with pytest.raises(OasisAlpacaConfigError):
+        build_benchmark_plan(config, build_benchmark_targets(config))
 
 
 def test_format_benchmark_plan_matches_documented_layout():
     plan = {
         "models": ["PiWind"],
-        "comparisons": ["OasisLMF 2.4.9", "OasisLMF 2.3.3"],
+        "targets": ["PiWind: OasisLMF 2.4.9", "PiWind: OasisLMF 2.3.3"],
         "execution_mode": "parallel",
     }
     assert format_benchmark_plan(plan) == (
@@ -323,10 +387,22 @@ def test_format_benchmark_plan_matches_documented_layout():
         "Models:\n"
         "- PiWind\n"
         "\n"
-        "Comparison:\n"
-        "- OasisLMF 2.4.9\n"
-        "- OasisLMF 2.3.3\n"
+        "Targets:\n"
+        "- PiWind: OasisLMF 2.4.9\n"
+        "- PiWind: OasisLMF 2.3.3\n"
         "\n"
         "Execution mode:\n"
         "parallel"
     )
+
+
+def test_model_name_from_location_keeps_a_repo_named_only_oasis():
+    """Stripping the 'Oasis' prefix must not leave a model with no name at all."""
+    assert model_name_from_location("https://github.com/OasisLMF/Oasis") == "Oasis"
+
+
+def test_model_name_from_location_falls_back_to_the_location_itself():
+    """A location that's neither S3 nor GitHub has no repo name to derive, so it names
+    itself rather than coming out blank in the report.
+    """
+    assert model_name_from_location("/mnt/models/mymodel") == "/mnt/models/mymodel"

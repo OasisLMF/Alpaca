@@ -1,6 +1,6 @@
 from alpaca.benchmark.comparison import (
-    find_output_dir, compare_output_dirs, build_comparison_report, format_comparison_report,
-    resolve_relative_tolerance, DEFAULT_RELATIVE_TOLERANCE
+    find_output_dir, compare_output_dirs, build_comparison_report, build_comparison_reports,
+    format_comparison_report, format_comparison_reports, resolve_relative_tolerance, DEFAULT_RELATIVE_TOLERANCE
 )
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from unittest import mock
@@ -212,6 +212,94 @@ def test_build_comparison_report_passes_within_custom_tolerance(tmp_path):
     assert report == {"status": "pass", "different_files": []}
 
 
+def test_build_comparison_reports_compares_every_target_against_the_reference(tmp_path):
+    _write(tmp_path / "fastest" / "output", {"summary.csv": "a,b\n1,2\n"})
+    _write(tmp_path / "same" / "output", {"summary.csv": "a,b\n1,2\n"})
+    _write(tmp_path / "different" / "output", {"summary.csv": "a,b\n1,3\n"})
+
+    report = build_comparison_reports(
+        ("PiWind 2.4.9", tmp_path / "fastest"),
+        [("PiWind 2.5.6", tmp_path / "same"), ("PiWind 2.3.3", tmp_path / "different")],
+    )
+
+    assert report == {
+        "reference": "PiWind 2.4.9",
+        "status": "fail",
+        "comparisons": [
+            {"target": "PiWind 2.5.6", "status": "pass", "different_files": []},
+            {"target": "PiWind 2.3.3", "status": "fail", "different_files": ["summary.csv"]},
+        ],
+    }
+
+
+def test_build_comparison_reports_passes_only_when_every_target_matches(tmp_path):
+    _write(tmp_path / "fastest" / "output", {"summary.csv": "a,b\n1,2\n"})
+    _write(tmp_path / "other" / "output", {"summary.csv": "a,b\n1,2\n"})
+
+    report = build_comparison_reports(("PiWind 2.4.9", tmp_path / "fastest"), [("PiWind 2.5.6", tmp_path / "other")])
+
+    assert report["status"] == "pass"
+
+
+def test_build_comparison_reports_handles_a_single_target(tmp_path):
+    _write(tmp_path / "fastest" / "output", {"summary.csv": "a,b\n1,2\n"})
+    _write(tmp_path / "other" / "output", {"summary.csv": "a,b\n1,3\n"})
+
+    report = build_comparison_reports(("PiWind 2.4.9", tmp_path / "fastest"), [("PiWind 2.5.6", tmp_path / "other")])
+
+    assert report["comparisons"] == [{"target": "PiWind 2.5.6", "status": "fail", "different_files": ["summary.csv"]}]
+
+
+def test_build_comparison_reports_passes_with_nothing_to_compare(tmp_path):
+    """Nothing to compare can't fail; main skips the comparison entirely in that case."""
+    _write(tmp_path / "fastest" / "output", {"summary.csv": "a,b\n1,2\n"})
+
+    report = build_comparison_reports(("PiWind 2.4.9", tmp_path / "fastest"), [])
+
+    assert report == {"reference": "PiWind 2.4.9", "status": "pass", "comparisons": []}
+
+
+def test_build_comparison_reports_raises_when_a_target_has_no_output(tmp_path):
+    _write(tmp_path / "fastest" / "output", {"summary.csv": "a,b\n1,2\n"})
+
+    with pytest.raises(OasisAlpacaError):
+        build_comparison_reports(("PiWind 2.4.9", tmp_path / "fastest"), [("PiWind 2.5.6", tmp_path / "missing")])
+
+
+def test_build_comparison_reports_respects_custom_tolerance(tmp_path):
+    _write(tmp_path / "fastest" / "output", {"summary.csv": "a,b\n1,2.0\n"})
+    _write(tmp_path / "other" / "output", {"summary.csv": "a,b\n1,2.001\n"})
+
+    report = build_comparison_reports(
+        ("PiWind 2.4.9", tmp_path / "fastest"), [("PiWind 2.5.6", tmp_path / "other")], relative_tolerance=0.01
+    )
+
+    assert report["status"] == "pass"
+
+
+def test_format_comparison_reports_names_the_reference_and_every_target():
+    report = {
+        "reference": "PiWind 2.4.9",
+        "status": "fail",
+        "comparisons": [
+            {"target": "PiWind 2.5.6", "status": "pass", "different_files": []},
+            {"target": "PiWind 2.3.3", "status": "fail", "different_files": ["summary.csv"]},
+        ],
+    }
+    assert format_comparison_reports(report) == (
+        "Output comparison against PiWind 2.4.9:\n"
+        "\n"
+        "PiWind 2.5.6:\n"
+        "PASS:\n"
+        "Outputs identical\n"
+        "\n"
+        "PiWind 2.3.3:\n"
+        "FAIL:\n"
+        "Files different:\n"
+        "- summary.csv"
+    )
+
+
 def test_format_comparison_report_pass():
     assert format_comparison_report({"status": "pass", "different_files": []}) == "PASS:\nOutputs identical"
 
@@ -224,3 +312,13 @@ def test_format_comparison_report_fail_matches_documented_layout():
         "- summary.csv\n"
         "- gul_summary.csv"
     )
+
+
+def test_csv_files_with_the_same_row_count_but_different_columns_are_different(tmp_path):
+    """A row that gained or lost a column is a real difference, not a value to compare."""
+    reference = tmp_path / "reference"
+    target = tmp_path / "target"
+    _write(reference, {"summary.csv": "a,b\n1,2\n"})
+    _write(target, {"summary.csv": "a,b,c\n1,2,3\n"})
+
+    assert compare_output_dirs(reference, target) == ["summary.csv"]

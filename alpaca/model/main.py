@@ -1,4 +1,4 @@
-from alpaca.model.scripts import model_run_commands
+from alpaca.model.commands import model_run_commands
 from alpaca.model.utils import REQUIRED_CONFIG_MODEL, OPTIONAL_CONFIG_MODEL
 from alpaca.remote_controller import RemoteController
 

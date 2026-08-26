@@ -19,13 +19,15 @@ def _run_target(run_config_entry):
     with the wall-clock kept separately as 'total_runtime_seconds'.
 
     Args:
-        run_config_entry: One entry as returned by build_model_run_configs, with 'label',
+        run_config_entry: One entry as returned by build_benchmark_targets, with 'label',
             'model', 'version' and 'run_config' keys.
 
     Returns:
-        dict: {'model', 'version', 'status', 'runtime_seconds', 'total_runtime_seconds',
-            'step_timings'}. 'status' is 'success' unless alpaca.model.main.main raises, in
-            which case it is 'failed' and the exception is logged. 'step_timings' is a dict
+        dict: {'label', 'model', 'version', 'status', 'runtime_seconds',
+            'total_runtime_seconds', 'step_timings'}. 'label' is the target's own label, so a
+            result can be traced back to the target that produced it. 'status' is 'success'
+            unless alpaca.model.main.main raises, in which case it is 'failed' and the
+            exception is logged. 'step_timings' is a dict
             of every 'COMPLETED: <step> in <seconds>s' OasisLMF reported (e.g.
             'execution.runner.run', 'computation.generate.files.run'), empty on failure or
             when result.txt couldn't be found/parsed.
@@ -47,6 +49,7 @@ def _run_target(run_config_entry):
         runtime_seconds = round(model_runtime_seconds)
 
     return {
+        "label": run_config_entry["label"],
         "model": run_config_entry["model"],
         "version": run_config_entry["version"],
         "status": status,
@@ -60,12 +63,12 @@ def run_benchmark_targets(run_configs, execution_mode="parallel"):
     """Run every benchmark target's model execution and collect its result.
 
     Args:
-        run_configs: List of entries as returned by build_model_run_configs.
+        run_configs: List of entries as returned by build_benchmark_targets.
         execution_mode: 'parallel' runs every target concurrently, each in its own thread
             and on its own EC2 instance. 'sequential' runs them one after another.
 
     Returns:
-        list[dict]: One result per target, in run_configs order, each with 'model',
+        list[dict]: One result per target, in run_configs order, each with 'label', 'model',
             'version', 'status', 'runtime_seconds', 'total_runtime_seconds' and
             'step_timings' (see _run_target).
     """
