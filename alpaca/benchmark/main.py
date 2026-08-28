@@ -6,7 +6,7 @@ from alpaca.benchmark.executor import run_benchmark_targets
 from alpaca.benchmark.comparison import build_comparison_reports, resolve_relative_tolerance
 from alpaca.benchmark.report import build_report_text, run_name, write_report
 from alpaca.benchmark.s3_baseline import (
-    download_baseline, publishing_baseline, resolve_stored_versions, upload_baseline, validate_s3_baseline_config
+    download_baseline, resolve_stored_versions, upload_baseline, validate_s3_baseline_config
 )
 from alpaca.benchmark.timing import fastest_result, resolve_model_runtime, sort_results_by_speed
 from alpaca.config import load_config
@@ -48,7 +48,7 @@ def main(config_file):
     print(format_benchmark_plan(plan))
 
     results = _resolve_targets(config, targets, plan["execution_mode"])
-    if publishing_baseline(config):
+    if config.get("PUBLISH_BASELINE", False):
         _publish_baselines(config, targets, results)
     comparison_report, skip_reason = _compare_targets(targets, results, relative_tolerance)
 
@@ -189,7 +189,3 @@ def _publish_baselines(config, targets, results):
         upload_baseline(
             config["BENCHMARK_BUCKET"], version, target["run_config"]["RESULT_DIRECTORY"], config
         )
-
-
-if __name__ == "__main__":
-    main()

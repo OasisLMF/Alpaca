@@ -1,9 +1,9 @@
+from alpaca.config import load_config
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from alpaca.utils import remove_start, _download_results
 from alpaca.commands import (
     download_from_github_commands, download_from_s3_commands, upload_to_s3_commands, setup_python_commands, model_requirements_commands
 )
-import json
 import logging
 import boto3
 import paramiko
@@ -62,7 +62,7 @@ class RemoteController:
             OasisAlpacaConfigError: If any required configuration key is missing from both
                 the config file and environment variables.
         """
-        self.config = self._create_config(config_file, required_config, optional_config)
+        self.config = load_config(config_file, required_config, optional_config)
         self.session = None
         self.ec2 = None
         self.ssh = None
@@ -71,14 +71,16 @@ class RemoteController:
         self.availability_zone = None
         self.terminated = False
         # Set up log levels for all modules
-        log_level_str = self.config.get("LOG_LEVEL", "INFO")
+        log_level_str = self.config.get("LOG_LEVEL", "INFO").upper()
         log_level = getattr(logging, log_level_str, logging.INFO)
         logging.getLogger("alpaca").setLevel(log_level)
         logging.getLogger("botocore").setLevel(log_level)
         logging.getLogger("paramiko").setLevel(log_level)
         logging.getLogger("urllib3").setLevel(log_level)
+        if self.config.get("SSH_MAX_RETRIES", 60) < 1:
+            raise OasisAlpacaConfigError(f"SSH_MAX_RETRIES must be at least 1, got '{self.config['SSH_MAX_RETRIES']}'")
         # Debug
-        self.debug = str(self.config.get("DEBUG", "False")).lower() == "true"
+        self.debug = self.config.get("DEBUG", False)
         if self.debug:
             logger.info("Running in debug mode")
 
@@ -104,7 +106,8 @@ class RemoteController:
             None: Exceptions are not suppressed.
         """
         self.shutdown()
-        logger.debug(exc_type, exc_value, traceback)
+        if exc_type is not None:
+            logger.debug("Exiting after an exception", exc_info=(exc_type, exc_value, traceback))
 
     def setup_instance(self):
         """Create and configure the EC2 instance for model execution.
@@ -188,7 +191,7 @@ class RemoteController:
             stdin, stdout, stderr = self.ssh.exec_command(cmd, get_pty=needs_logs)
 
             if needs_logs:
-                output = self._ssh_logs_important(stdout, stderr)
+                output = self._ssh_logs_important(stdout)
             else:
                 output = self._ssh_logs_unimportant(stdout, stderr)
 
@@ -205,11 +208,17 @@ class RemoteController:
             repo_location: URL of the model source. Either a GitHub URL
                 (e.g., 'https://github.com/org/repo') or S3 URI
                 (e.g., 's3://bucket/path').
+
+        Raises:
+            OasisAlpacaConfigError: If repo_location is neither, as nothing would be
+                downloaded and the run would fail much later against an empty directory.
         """
         if 'github.com' in repo_location:
             self.run_commands(download_from_github_commands(repo_location))
         elif repo_location.startswith("s3"):
             self.run_commands(download_from_s3_commands(repo_location))
+        else:
+            raise OasisAlpacaConfigError(f"REPO_LOCATION must be a GitHub URL or an s3:// URI, got '{repo_location}'")
         self.run_commands(model_requirements_commands())
 
     def download_results(self, from_path=None, to_path=None):
@@ -232,42 +241,11 @@ class RemoteController:
         if to_path is None:
             to_path = Path(os.getcwd()) / "runs"
         sftp = self.ssh.open_sftp()
-        _download_results(sftp, Path(from_path), Path(to_path))
+        try:
+            _download_results(sftp, Path(from_path), Path(to_path))
+        except FileNotFoundError:
+            raise OasisAlpacaError(f"Nothing to download: {from_path} does not exist on the instance")
         logger.info("Download complete")
-
-    def _create_config(self, config_file, required_config, optional_config):
-        """Load and validate configuration from a JSON file or dict, plus environment variables.
-        JSON config (or the given dict) always takes priority.
-
-        Args:
-            config_file: Path to a JSON configuration file, or an already-loaded config dict
-                (e.g. one built in memory for a single run rather than saved to disk).
-            required_config: List of (key, description, default) tuples for required keys.
-            optional_config: List of (key, description, default) tuples for optional keys.
-
-        Returns:
-            dict: Merged configuration dictionary.
-
-        Raises:
-            OasisAlpacaConfigError: If a required key is missing from both file and environment.
-        """
-        if isinstance(config_file, dict):
-            config = dict(config_file)
-        else:
-            with open(config_file, 'r') as f:
-                config = json.load(f)
-        for (key, _, _) in required_config:
-            if key not in config:
-                if f"ALPACA_{key}" in os.environ:
-                    logger.info(f"Config {key} taken from environment")
-                    config[key] = os.environ[f"ALPACA_{key}"]
-                else:
-                    raise OasisAlpacaConfigError(f"Missing required key {key} from alpaca config")
-        for (key, _, _) in optional_config:
-            if key not in config and f"ALPACA_{key}" in os.environ:
-                logger.info(f"Config {key} taken from environment")
-                config[key] = os.environ[f"ALPACA_{key}"]
-        return config
 
     def _aws_client(self, service):
         """Create a boto3 client for the given service from the controller's session.
@@ -374,7 +352,7 @@ class RemoteController:
         logger.info("Waiting for SSM Agent to register")
         ssm = self._aws_client("ssm")
 
-        max_retries = int(self.config.get("SSH_MAX_RETRIES", 60))
+        max_retries = self.config.get("SSH_MAX_RETRIES", 60)
         retry_count = 0
 
         while retry_count < max_retries:
@@ -408,7 +386,7 @@ class RemoteController:
         key = paramiko.RSAKey.generate(2048)
         public_key = f"{key.get_name()} {key.get_base64()}"
 
-        max_retries = int(self.config.get("SSH_MAX_RETRIES", 60))
+        max_retries = self.config.get("SSH_MAX_RETRIES", 60)
         retry_count = 0
 
         while retry_count < max_retries:
@@ -456,12 +434,13 @@ class RemoteController:
             command += f" --profile {profile}"
         return command
 
-    def _ssh_logs_important(self, stdout, stderr):
+    def _ssh_logs_important(self, stdout):
         """Stream command output in real-time for important commands.
 
         Args:
-            stdout: Paramiko ChannelFile for standard output.
-            stderr: Paramiko ChannelFile for standard error (combined with stdout).
+            stdout: Paramiko ChannelFile for standard output. Standard error is combined into
+                it rather than read separately, so that the two interleave as they would in a
+                terminal.
 
         Returns:
             str: The streamed output, for reporting alongside a non-zero exit status.
@@ -531,4 +510,4 @@ class RemoteController:
                 # colour check for a terminal and behave differently without one. A command
                 # that waits for input still hangs, as nothing reaches its stdin.
                 stdin, stdout, stderr = self.ssh.exec_command(response, get_pty=True)
-            self._ssh_logs_important(stdout, stderr)
+            self._ssh_logs_important(stdout)

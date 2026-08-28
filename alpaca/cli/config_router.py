@@ -14,7 +14,7 @@ CONFIGS = {
 }
 
 
-def create_config_router(args=None):
+def create_config_router(args=()):
     """Route to the appropriate config creator based on run type.
 
     Args:

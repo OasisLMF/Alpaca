@@ -8,6 +8,9 @@ def model_run_commands(path_to_oasislmf):
     output directory. Since result.txt lands inside runs/, it's picked up by the same
     recursive download as everything else there, with no separate download step needed.
 
+    'set -o pipefail' makes the command report OasisLMF's exit status rather than tee's,
+    which is always zero, so a failed run can be told apart from a successful one.
+
     Args:
         path_to_oasislmf: Path to the oasislmf.json file
 
@@ -16,6 +19,6 @@ def model_run_commands(path_to_oasislmf):
     """
     commands = [
         "mkdir -p runs",
-        f"oasislmf model run -C {path_to_oasislmf} | tee runs/result.txt"
+        f"set -o pipefail; oasislmf model run -C {path_to_oasislmf} | tee runs/result.txt"
     ]
     return commands

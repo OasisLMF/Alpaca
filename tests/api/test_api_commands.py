@@ -22,7 +22,7 @@ def test_api_run_commands_runs_oasislmf_api():
 def test_api_run_commands_creates_output_directory_moves_results():
     """Test that api_run_commands will create a runs directory and move the run in the correct order."""
     commands = api_run_commands("/config.json")
-    missing_commands = ["oasislmf api run", "mkdir -p ./runs", "mv ./analysis_1_output.tar.gz ./runs/analysis_1_output.tar.gz"]
+    missing_commands = ["oasislmf api run", "mkdir -p ./runs", "mv ./analysis_*_output.tar.gz ./runs/"]
     for command in commands:
         if missing_commands[0] in command:
             missing_commands.pop(0)
@@ -98,3 +98,12 @@ def test_docker_install_installs_docker():
             if len(unused_commands) == 0:
                 break
     assert unused_commands
+
+
+def test_wait_for_oasis_server_polls_the_platform_healthcheck_route():
+    """The platform route is 'healthcheck/'; without the slash Django 301s and curl -sf
+    treats the redirect as success, ending the wait before the server is ready.
+    """
+    command = wait_for_oasis_server_commands()[0]
+
+    assert "http://localhost:8000/healthcheck/" in command
