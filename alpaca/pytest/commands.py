@@ -19,6 +19,6 @@ def run_pytest_commands(pytest_args=""):
         "sudo pip install mock -qq",
         "sudo pip install responses -qq",
         "mkdir -p pytest_logs",
-        f"pytest . -vv {pytest_args} | tee pytest_logs/pytest-{timestamp}.txt"
+        f"set -o pipefail; pytest . -vv {pytest_args} | tee pytest_logs/pytest-{timestamp}.txt"
     ]
     return commands

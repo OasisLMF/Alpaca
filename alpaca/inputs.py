@@ -13,10 +13,10 @@ COMPARISON_TOLERANCE = (
     "COMPARISON_TOLERANCE",
     "Relative tolerance for numeric differences when comparing benchmark run outputs (e.g. 1e-6), "
     "since OasisLMF's Monte Carlo sampling means two runs rarely produce byte-identical loss tables",
-    "1e-6"
+    1e-6
 )
-DEBUG = ("DEBUG", "Run using debug mode (must be True to enable)", "False")
-DISK_GB = ("DISK_GB", "How many GB your EC2 needs to store your data", "50")
+DEBUG = ("DEBUG", "Run using debug mode (must be True to enable)", False)
+DISK_GB = ("DISK_GB", "How many GB your EC2 needs to store your data", 100)
 EC2_NAME = (
     "EC2_NAME",
     "Name of EC2 Instance. In a benchmark run this is always overridden per target as "
@@ -34,7 +34,7 @@ IAM_INSTANCE_PROFILE = (
 )
 INSTANCE_TYPE = ("INSTANCE_TYPE", "Server configuration, amount of resources:", "t3.medium")
 LOG_LEVEL = ("LOG_LEVEL", "Verbosity of logging", "INFO")
-MAX_LIFETIME_HOURS = ("MAX_LIFETIME_HOURS", "Max lifetime of EC2 instance in hours", "2")
+MAX_LIFETIME_HOURS = ("MAX_LIFETIME_HOURS", "Max lifetime of EC2 instance in hours", 2)
 OASISLMF_BRANCH = ("OASISLMF_BRANCH", "Branch of the OasisLMF repo to install from source, used in place of OASISLMF_VERSION", "")
 OASISLMF_BRANCHES = ("OASISLMF_BRANCHES", "JSON array of OasisLMF branches to benchmark, one target each, replaces OASISLMF_BRANCH", [])
 OASISLMF_VERSION = ("OASISLMF_VERSION", "Specific version of OasisLMF to use", "")
@@ -47,7 +47,7 @@ PUBLISH_BASELINE = (
     "When 'True' and BENCHMARK_BUCKET is set, publish each version target's output and performance metrics to "
     "BENCHMARK_BUCKET as that version's new stored baseline, and run every version live rather than reusing a "
     "stored one (branch targets are skipped, having no version to publish under)",
-    "False"
+    False
 )
 PYTEST_ARGS = ("PYTEST_ARGS", "Arguments to pass to PyTest (already uses -vv flag)", "")
 REPO_LOCATION = ("REPO_LOCATION", "S3 location (s3://bucket) or link to GitHub repo (https://github.com/name/repo) with data",
@@ -60,5 +60,5 @@ REPO_LOCATIONS = (
 )
 RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket) or local (./path/to/local)", "./runs")
 SECURITY_GROUP_ID = ("SECURITY_GROUP_ID", "Security group id of EC2 instance", "MySecurityGroup")
-SSH_MAX_RETRIES = ("SSH_MAX_RETRIES", "Maximum number of SSH-over-SSM connection attempts before timeout", "60")
+SSH_MAX_RETRIES = ("SSH_MAX_RETRIES", "Maximum number of SSH-over-SSM connection attempts before timeout", 60)
 SUBNET_ID = ("SUBNET_ID", "Subnet id of EC2 instance", "MySubnetID")

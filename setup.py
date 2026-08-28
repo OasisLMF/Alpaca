@@ -21,7 +21,7 @@ setup(
     author="Oasis LMF",
     author_email="support@oasislmf.org",
     keywords='oasis lmf loss modeling framework',
-    description="",
+    description="Command line tool for running and benchmarking Oasis models on EC2 instances",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/OasisLMF/Alpaca",

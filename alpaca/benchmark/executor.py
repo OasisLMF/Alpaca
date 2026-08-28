@@ -7,6 +7,8 @@ import time
 
 logger = logging.getLogger(__name__)
 
+MAX_PARALLEL_TARGETS = 8
+
 
 def _run_target(run_config_entry):
     """Run one benchmark target's model execution and time its outcome.
@@ -64,8 +66,10 @@ def run_benchmark_targets(run_configs, execution_mode="parallel"):
 
     Args:
         run_configs: List of entries as returned by build_benchmark_targets.
-        execution_mode: 'parallel' runs every target concurrently, each in its own thread
-            and on its own EC2 instance. 'sequential' runs them one after another.
+        execution_mode: 'parallel' runs targets concurrently, each in its own thread and on
+            its own EC2 instance, up to MAX_PARALLEL_TARGETS at a time so that a large
+            benchmark doesn't launch dozens of instances at once and run into an EC2 limit.
+            Any beyond that wait for a slot. 'sequential' runs them one after another.
 
     Returns:
         list[dict]: One result per target, in run_configs order, each with 'label', 'model',
@@ -75,6 +79,10 @@ def run_benchmark_targets(run_configs, execution_mode="parallel"):
     if execution_mode == "sequential":
         return [_run_target(entry) for entry in run_configs]
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(run_configs)) as executor:
+    max_workers = min(len(run_configs), MAX_PARALLEL_TARGETS)
+    if len(run_configs) > max_workers:
+        logger.info(f"Running {len(run_configs)} benchmark targets {max_workers} at a time")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(_run_target, entry) for entry in run_configs]
         return [future.result() for future in futures]

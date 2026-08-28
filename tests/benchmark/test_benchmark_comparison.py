@@ -166,17 +166,18 @@ def test_resolve_relative_tolerance_defaults_when_unset():
 
 
 def test_resolve_relative_tolerance_reads_configured_value():
-    assert resolve_relative_tolerance({"COMPARISON_TOLERANCE": "0.01"}) == 0.01
+    """load_config has already made this a float, so only the value itself is in question."""
+    assert resolve_relative_tolerance({"COMPARISON_TOLERANCE": 0.01}) == 0.01
 
 
-def test_resolve_relative_tolerance_raises_on_non_numeric_value():
-    with pytest.raises(OasisAlpacaConfigError):
-        resolve_relative_tolerance({"COMPARISON_TOLERANCE": "not-a-number"})
+def test_resolve_relative_tolerance_keeps_a_configured_zero():
+    """Zero is a meaningful tolerance, asking for outputs that match exactly."""
+    assert resolve_relative_tolerance({"COMPARISON_TOLERANCE": 0.0}) == 0.0
 
 
 def test_resolve_relative_tolerance_raises_on_negative_value():
     with pytest.raises(OasisAlpacaConfigError):
-        resolve_relative_tolerance({"COMPARISON_TOLERANCE": "-1"})
+        resolve_relative_tolerance({"COMPARISON_TOLERANCE": -1.0})
 
 
 def test_build_comparison_report_passes_when_identical(tmp_path):
