@@ -1,3 +1,4 @@
+from alpaca.exceptions import OasisAlpacaConfigError
 from urllib.parse import urlparse
 import re
 
@@ -86,11 +87,17 @@ def download_from_github_commands(github_link):
 
     Returns:
         list[str]: Shell commands to execute.
+
+    Raises:
+        OasisAlpacaConfigError: If no repository name can be read from the link.
     """
-    folder_name = re.split(r"[/.]", urlparse(github_link).path)[2]
+    segments = [segment for segment in urlparse(github_link).path.split("/") if segment]
+    if len(segments) < 2:
+        raise OasisAlpacaConfigError(f"Could not read a repository name from REPO_LOCATION '{github_link}'")
+    folder_name = re.sub(r"\.git$", "", segments[-1])
     commands = [
         f"git clone {github_link}",
-        f"mv {folder_name}/* ."
+        f"find {folder_name} -mindepth 1 -maxdepth 1 -exec mv -t . {{}} +"
     ]
     return commands
 
@@ -158,9 +165,9 @@ def model_requirements_commands():
     return [
         (
             "if [ -f requirements.txt ]; then "
-            "  python -m pip install -r requirements.txt; "
+            "  sudo python3 -m pip install -r requirements.txt; "
             "elif [ -f requirements.in ]; then "
-            "  python -m pip install -r requirements.in; "
+            "  sudo python3 -m pip install -r requirements.in; "
             "else "
             "  echo 'No requirements.txt or requirements.in found'; "
             "fi"

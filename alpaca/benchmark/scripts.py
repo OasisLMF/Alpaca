@@ -210,7 +210,14 @@ def build_benchmark_targets(config, stored_versions=()):
         raise OasisAlpacaConfigError("REPO_LOCATIONS must hold at least one model location to benchmark")
 
     result_directory = config.get("RESULT_DIRECTORY", "./runs").rstrip("/")
+    if result_directory.startswith("s3://"):
+        raise OasisAlpacaConfigError(
+            f"RESULT_DIRECTORY must be a local path for a benchmark, as the timings and output comparison are read "
+            f"from the downloaded results, got '{result_directory}'"
+        )
     sources = oasislmf_sources(config)
+    if resolve_execution_mode(config) == "parallel":
+        config["DEBUG"] = False
 
     targets = []
     labels = set()

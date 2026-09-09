@@ -6,7 +6,7 @@ def test_model_run_commands_runs_oasislmf():
     config_path = "/path/to/config.json"
     commands = model_run_commands(config_path)
 
-    runs_model = any(command.startswith(f"oasislmf model run -C {config_path}") for command in commands)
+    runs_model = any(f"oasislmf model run -C {config_path}" in command for command in commands)
     assert runs_model
 
 
@@ -15,7 +15,7 @@ def test_model_run_commands_with_relative_path():
     config_path = "./config.json"
     commands = model_run_commands(config_path)
 
-    has_command = any(command.startswith(f"oasislmf model run -C {config_path}") for command in commands)
+    has_command = any(f"oasislmf model run -C {config_path}" in command for command in commands)
     assert has_command
 
 
@@ -38,3 +38,10 @@ def test_model_run_commands_creates_runs_dir_before_teeing():
     mkdir_index = commands.index("mkdir -p runs")
     run_index = next(i for i, command in enumerate(commands) if "tee runs/result.txt" in command)
     assert mkdir_index < run_index
+
+
+def test_model_run_commands_reports_the_model_runs_exit_status():
+    """Without pipefail the piped run reports tee's exit status, so a failure looks like a pass."""
+    command = next(c for c in model_run_commands("/path/to/config.json") if "oasislmf model run" in c)
+
+    assert command.startswith("set -o pipefail; ")

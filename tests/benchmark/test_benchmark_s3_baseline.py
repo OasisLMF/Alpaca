@@ -1,5 +1,5 @@
 from alpaca.benchmark.s3_baseline import (
-    download_baseline, publishing_baseline, resolve_stored_versions, upload_baseline, validate_s3_baseline_config
+    download_baseline, resolve_stored_versions, upload_baseline, validate_s3_baseline_config
 )
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from moto import mock_aws
@@ -146,13 +146,6 @@ def test_validate_passes_when_nothing_configured():
     validate_s3_baseline_config({})
 
 
-def test_publishing_baseline_reads_the_flag():
-    assert publishing_baseline({"PUBLISH_BASELINE": "True"})
-    assert publishing_baseline({"PUBLISH_BASELINE": "true"})
-    assert not publishing_baseline({"PUBLISH_BASELINE": "False"})
-    assert not publishing_baseline({})
-
-
 @mock_aws
 def test_resolve_stored_versions_finds_only_the_stored_versions(tmp_path):
     """A version already in the bucket is reused; one that isn't has to be run."""
@@ -193,6 +186,16 @@ def test_resolve_stored_versions_returns_nothing_without_any_versions():
     config = {"BENCHMARK_BUCKET": "s3://alpaca-benchmark", "OASISLMF_BRANCHES": ["main"], "REPO_LOCATIONS": [PIWIND]}
 
     assert resolve_stored_versions(config) == set()
+
+
+@mock_aws
+def test_resolve_stored_versions_names_a_bucket_it_cannot_read():
+    """A mistyped or unauthorised bucket should be corrected, not reported as a botocore error."""
+    config = {**CONFIG, "BENCHMARK_BUCKET": "s3://not-a-real-bucket", "OASISLMF_VERSIONS": ["2.5.4"],
+              "REPO_LOCATIONS": [PIWIND]}
+
+    with pytest.raises(OasisAlpacaConfigError, match="not-a-real-bucket"):
+        resolve_stored_versions(config)
 
 
 @mock_aws

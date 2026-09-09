@@ -11,7 +11,7 @@ def api_run_commands(path_to_oasislmf_json):
     commands = [
         f"oasislmf api run --server-url http://localhost:8000/ -C {path_to_oasislmf_json}",
         "mkdir -p ./runs",
-        "mv ./analysis_1_output.tar.gz ./runs/analysis_1_output.tar.gz"
+        "mv ./analysis_*_output.tar.gz ./runs/"
     ]
     return commands
 
@@ -33,7 +33,7 @@ def deploy_oasis_server_commands(path_to_docker_compose):
         return commands
 
     commands = [
-        f"sudo docker compose -f {path_to_docker_compose} --project-directory . up -d --build > /dev/null 2>&1",
+        f"sudo docker compose -f {path_to_docker_compose} --project-directory . up -d --build",
     ]
     return commands
 
@@ -42,14 +42,11 @@ def wait_for_oasis_server_commands():
     """Generate commands to wait for the Oasis API server to become healthy. Waits 315 seconds (5 second wait doubling until 160 seconds maximum).
 
     Returns:
-        list[str]: Shell commands to execute (single polling command).
-
-    Raises:
-        The generated command exits with code 1 if the server doesn't
-        respond within the timeout period.
+        list[str]: Shell commands to execute (single polling command). The command exits with
+            code 1 if the server doesn't respond within the timeout period.
     """
     commands = [
-        'delay=5; max=300; elapsed=0; until curl -sf http://localhost:8000/healthcheck; do '
+        'delay=5; max=300; elapsed=0; until curl -sf http://localhost:8000/healthcheck/; do '
         '[ "$elapsed" -ge "$max" ] && echo "Timed out waiting for service" && exit 1; sleep '
         '"$delay"; elapsed=$((elapsed + delay)); delay=$(( delay < max ? delay * 2 : max )); done'
     ]

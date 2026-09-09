@@ -176,10 +176,18 @@ def test_build_benchmark_targets_uses_separate_result_directories():
 
 
 def test_build_benchmark_targets_respects_configured_result_directory():
-    config = {**BASE_BENCHMARK_CONFIG, "RESULT_DIRECTORY": "s3://bucket/results"}
+    config = {**BASE_BENCHMARK_CONFIG, "RESULT_DIRECTORY": "/local/results"}
     targets = build_benchmark_targets(config)
 
-    assert targets[0]["run_config"]["RESULT_DIRECTORY"] == "s3://bucket/results/PiWind-2.3.3"
+    assert targets[0]["run_config"]["RESULT_DIRECTORY"] == "/local/results/PiWind-2.3.3"
+
+
+def test_build_benchmark_targets_rejects_an_s3_result_directory():
+    """A benchmark reads its timings and outputs back off disk, so results must land locally."""
+    config = {**BASE_BENCHMARK_CONFIG, "RESULT_DIRECTORY": "s3://bucket/results"}
+
+    with pytest.raises(OasisAlpacaConfigError):
+        build_benchmark_targets(config)
 
 
 def test_build_benchmark_targets_makes_result_directories_path_safe():
@@ -328,6 +336,25 @@ def test_build_benchmark_targets_raises_without_any_location():
     """An empty REPO_LOCATIONS has nothing to benchmark, and shouldn't read as a valid run."""
     with pytest.raises(OasisAlpacaConfigError):
         build_benchmark_targets({**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": []})
+
+
+def test_build_benchmark_targets_switches_debug_off_when_parallel():
+    """Concurrent targets would all prompt for input at once, so debug mode can't apply."""
+    config = {**BASE_BENCHMARK_CONFIG, "DEBUG": True, "EXECUTION_MODE": "parallel"}
+
+    targets = build_benchmark_targets(config)
+
+    assert [target["run_config"]["DEBUG"] for target in targets] == [False, False]
+    assert config["DEBUG"] is False
+
+
+def test_build_benchmark_targets_keeps_debug_when_sequential():
+    """Sequential targets run one at a time, so there is a single prompt to answer."""
+    config = {**BASE_BENCHMARK_CONFIG, "DEBUG": True, "EXECUTION_MODE": "sequential"}
+
+    targets = build_benchmark_targets(config)
+
+    assert all(target["run_config"]["DEBUG"] is True for target in targets)
 
 
 def test_build_benchmark_plan_lists_each_model_once_and_every_target():
