@@ -24,7 +24,3 @@ def main(config_file):
 def log_condition(cmd):
     """Only uses flow logs for api run command."""
     return cmd.startswith("oasislmf api")
-
-
-if __name__ == "__main__":
-    main()

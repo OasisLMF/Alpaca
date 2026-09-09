@@ -36,31 +36,35 @@ def find_output_dir(run_directory):
 
 
 def resolve_relative_tolerance(config):
-    """Read and validate COMPARISON_TOLERANCE from a benchmark config.
+    """Read COMPARISON_TOLERANCE from a benchmark config and check it makes sense.
+
+    The value is already a float by the time it gets here, as alpaca.config.load_config types
+    every declared key, so this only supplies the default and rejects a tolerance that can't
+    mean anything.
 
     Args:
         config: Validated benchmark configuration dictionary.
 
     Returns:
-        float: The configured relative tolerance, or DEFAULT_RELATIVE_TOLERANCE if unset.
+        float: The configured relative tolerance, or DEFAULT_RELATIVE_TOLERANCE if unset. A
+            configured zero is kept, meaning outputs have to match exactly.
 
     Raises:
-        OasisAlpacaConfigError: If COMPARISON_TOLERANCE is set but isn't a non-negative number.
+        OasisAlpacaConfigError: If COMPARISON_TOLERANCE is negative.
     """
-    raw_value = config.get("COMPARISON_TOLERANCE")
-    if not raw_value:
+    tolerance = config.get("COMPARISON_TOLERANCE")
+    if tolerance is None:
         return DEFAULT_RELATIVE_TOLERANCE
-    try:
-        tolerance = float(raw_value)
-    except (TypeError, ValueError):
-        raise OasisAlpacaConfigError(f"COMPARISON_TOLERANCE must be a number, got '{raw_value}'")
     if tolerance < 0:
-        raise OasisAlpacaConfigError(f"COMPARISON_TOLERANCE must not be negative, got '{raw_value}'")
+        raise OasisAlpacaConfigError(f"COMPARISON_TOLERANCE must not be negative, got '{tolerance}'")
     return tolerance
 
 
 def _file_checksum(path):
-    """Compute the MD5 checksum of a file's contents.
+    """Compute the SHA-256 checksum of a file's contents.
+
+    Only used to tell whether two output files are byte-identical, so the choice of hash
+    doesn't matter much, but SHA-256 is available on FIPS-enabled hosts where MD5 isn't.
 
     Args:
         path: Path to the file.
@@ -68,7 +72,7 @@ def _file_checksum(path):
     Returns:
         str: Hex digest of the file's contents.
     """
-    digest = hashlib.md5()
+    digest = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(CHECKSUM_CHUNK_SIZE), b""):
             digest.update(chunk)

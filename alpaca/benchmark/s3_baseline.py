@@ -62,18 +62,6 @@ def _s3_client(config):
     return session.client("s3")
 
 
-def publishing_baseline(config):
-    """Report whether this benchmark publishes its targets as stored baselines.
-
-    Args:
-        config: Validated benchmark configuration dictionary.
-
-    Returns:
-        bool: True if PUBLISH_BASELINE is set to 'True'.
-    """
-    return str(config.get("PUBLISH_BASELINE", "False")).lower() == "true"
-
-
 def validate_s3_baseline_config(config):
     """Validate BENCHMARK_BUCKET/PUBLISH_BASELINE combinations before any EC2 spend.
 
@@ -85,7 +73,7 @@ def validate_s3_baseline_config(config):
             without any OASISLMF_VERSIONS entry to publish under, since a baseline is stored
             under a version and a branch target hasn't got one.
     """
-    if not publishing_baseline(config):
+    if not config.get("PUBLISH_BASELINE", False):
         return
 
     if not config.get("BENCHMARK_BUCKET"):
@@ -116,7 +104,7 @@ def resolve_stored_versions(config):
     if not bucket or not versions:
         return set()
 
-    if publishing_baseline(config):
+    if config.get("PUBLISH_BASELINE", False):
         logger.info("PUBLISH_BASELINE is set, so every version target runs rather than reusing a stored baseline")
         return set()
     if len(benchmark_locations(config)) > 1:
@@ -143,9 +131,17 @@ def _baseline_exists(client, bucket_uri, version):
 
     Returns:
         bool: True if any object exists under that version's 'output/' prefix.
+
+    Raises:
+        OasisAlpacaConfigError: If the bucket can't be read, e.g. it doesn't exist or the
+            credentials can't list it. This runs before any EC2 spend, so it's worth naming
+            the bucket rather than letting a botocore error through.
     """
     bucket, version_prefix = _version_prefix(bucket_uri, version)
-    listing = client.list_objects_v2(Bucket=bucket, Prefix=f"{version_prefix}/output/", MaxKeys=1)
+    try:
+        listing = client.list_objects_v2(Bucket=bucket, Prefix=f"{version_prefix}/output/", MaxKeys=1)
+    except ClientError as error:
+        raise OasisAlpacaConfigError(f"Could not read stored baselines from {bucket_uri}: {error}")
     return bool(listing.get("KeyCount"))
 
 

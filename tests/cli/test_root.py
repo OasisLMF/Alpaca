@@ -80,6 +80,49 @@ def test_main_with_help(mock_argv, restore_commands, mocker):
     mock_config.assert_called_once_with([])
 
 
+def test_main_with_help_flags_calls_help(mock_argv, mocker):
+    """'alpaca --help' used to report that --help was not a command."""
+    mock_help = mocker.patch.object(root, "alpaca_help")
+
+    for flag in ["-h", "--help", "-help", "h"]:
+        mock_argv(["alpaca", flag])
+        root.main()
+
+    assert mock_help.call_count == 4
+
+
+def test_main_with_unknown_command_reports_it(mock_argv, capsys):
+    mock_argv(["alpaca", "nonsense"])
+    root.main()
+
+    assert "Command nonsense not found" in capsys.readouterr().out
+
+
+def test_alpaca_help_lists_every_command(capsys):
+    root.alpaca_help()
+
+    printed = capsys.readouterr().out
+    for command in root.ALPACA_COMMANDS:
+        assert command in printed
+
+
+def test_alpaca_version_prints_the_installed_version(capsys, mocker):
+    mocker.patch.object(root, "version", return_value="1.2.3")
+
+    root.alpaca_version()
+
+    assert capsys.readouterr().out.strip() == "1.2.3"
+
+
+def test_alpaca_version_explains_an_uninstalled_package(capsys, mocker):
+    """Running from a source tree that was never pip installed has no version to report."""
+    mocker.patch.object(root, "version", side_effect=root.PackageNotFoundError)
+
+    root.alpaca_version()
+
+    assert "not installed" in capsys.readouterr().out
+
+
 def test_main_with_benchmark(mock_argv, restore_commands, mocker):
     mock_benchmark = mocker.Mock()
     assert "benchmark" in root.ALPACA_COMMANDS

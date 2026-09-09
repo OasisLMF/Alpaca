@@ -7,6 +7,9 @@ from alpaca.commands import (
     download_only_important_command,
     model_requirements_commands
 )
+from alpaca.exceptions import OasisAlpacaConfigError
+
+import pytest
 
 
 def test_setup_python_commands_uses_version():
@@ -111,13 +114,26 @@ def test_download_from_github_clones_repo_then_moves():
     github_link = "https://github.com/OasisLMF/PiWind"
     commands = download_from_github_commands(github_link)
 
-    unused_commands = [f"git clone {github_link}", "mv PiWind/* ."]
+    unused_commands = [f"git clone {github_link}", "find PiWind -mindepth 1 -maxdepth 1 -exec mv -t . {} +"]
     for command in commands:
         if unused_commands[0] in command:
             unused_commands.pop(0)
             if len(unused_commands) == 0:
                 break
     assert unused_commands == []
+
+
+def test_download_from_github_reads_the_repo_name_from_any_link_form():
+    """A '.git' suffix, a trailing slash and an SSH-style link all name the same folder."""
+    for link in ["https://github.com/OasisLMF/PiWind", "https://github.com/OasisLMF/PiWind.git",
+                 "https://github.com/OasisLMF/PiWind/", "git@github.com:OasisLMF/PiWind.git"]:
+        assert "find PiWind " in download_from_github_commands(link)[1]
+
+
+def test_download_from_github_raises_without_a_repo_name():
+    """A link with no repository would otherwise fail on an index that isn't there."""
+    with pytest.raises(OasisAlpacaConfigError):
+        download_from_github_commands("https://github.com/OasisLMF")
 
 
 def test_upload_to_s3_creates_bucket_if_needed():
@@ -160,5 +176,6 @@ def test_model_requirements_checks_requirements():
     """Test that model requirements will check for requirements and install them."""
     commands = model_requirements_commands()
     command = commands[0]
-    assert "if [ -f requirements.txt ]; then   python -m pip install -r requirements.txt" in command
-    assert "if [ -f requirements.in ]; then   python -m pip install -r requirements.in" in command
+    assert "if [ -f requirements.txt ]; then   sudo python3 -m pip install -r requirements.txt" in command
+    assert "if [ -f requirements.in ]; then   sudo python3 -m pip install -r requirements.in" in command
+    assert "python -m pip" not in command

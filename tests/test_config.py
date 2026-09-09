@@ -1,6 +1,6 @@
-from alpaca.config import create_config, is_list_input, load_config, parse_list_value
+from alpaca.config import create_config, load_config, parse_config_value, parse_list_value
 from alpaca.exceptions import OasisAlpacaConfigError
-from alpaca.inputs import (AMI_ID, AWS_REGION, OASISLMF_VERSIONS, REPO_LOCATION, REPO_LOCATIONS, SECURITY_GROUP_ID, DISK_GB)
+from alpaca.inputs import (AMI_ID, AWS_REGION, DEBUG, OASISLMF_VERSIONS, REPO_LOCATION, REPO_LOCATIONS, SECURITY_GROUP_ID, DISK_GB)
 from unittest import mock
 from pathlib import Path
 import tempfile
@@ -37,7 +37,7 @@ def test_create_config(mock_input):
         for i in range(len(REQUIRED_CONFIG)):
             assert REQUIRED_CONFIG[i][0] in calls[i][0][0]
             assert REQUIRED_CONFIG[i][1] in calls[i][0][0]
-            assert REQUIRED_CONFIG[i][2] in calls[i][0][0]
+            assert str(REQUIRED_CONFIG[i][2]) in calls[i][0][0]
         for j in range(len(OPTIONAL_CONFIG)):
             assert OPTIONAL_CONFIG[j][0] in calls[i + j + 1][0][0]
             assert OPTIONAL_CONFIG[j][1] in calls[i + j + 1][0][0]
@@ -62,10 +62,12 @@ def test_load_config_raises_on_missing_file():
         load_config("fake/config/path", [], [])
 
 
-def test_is_list_input_follows_the_default_value():
-    """An input declares that it takes a list by having a list default."""
-    assert is_list_input(OASISLMF_VERSIONS[2])
-    assert not is_list_input(AMI_ID[2])
+def test_parse_config_value_follows_the_declared_default():
+    """An input declares its type by the type of its default in alpaca.inputs."""
+    assert parse_config_value("OASISLMF_VERSIONS", "2.5.6", OASISLMF_VERSIONS[2]) == ["2.5.6"]
+    assert parse_config_value("DISK_GB", "50", DISK_GB[2]) == 50
+    assert parse_config_value("DEBUG", "True", DEBUG[2]) is True
+    assert parse_config_value("AMI_ID", "ami-123", AMI_ID[2]) == "ami-123"
 
 
 def test_parse_list_value_reads_a_json_array():
@@ -144,14 +146,120 @@ def test_load_config_wraps_a_single_value_given_to_a_list_key(tmp_path):
     assert config["OASISLMF_VERSIONS"] == ["2.5.6"]
 
 
-def test_load_config_defaults_an_absent_list_key_to_no_entries(tmp_path):
-    """A list key is always a list once loaded, so callers never have to guard for None."""
+def test_load_config_leaves_an_absent_list_key_absent(tmp_path):
+    """Absent means absent whatever the type, so callers keep their own 'or []' fallback."""
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps({}))
 
     config = load_config(config_path, [], [OASISLMF_VERSIONS])
 
-    assert config["OASISLMF_VERSIONS"] == []
+    assert "OASISLMF_VERSIONS" not in config
+
+
+def test_parse_config_value_reads_a_number_from_a_number_or_text():
+    """Environment variables and typed input can only carry text, not a real number."""
+    assert parse_config_value("DISK_GB", 50, 100) == 50
+    assert parse_config_value("DISK_GB", "50", 100) == 50
+
+
+def test_parse_config_value_raises_on_a_non_number():
+    with pytest.raises(OasisAlpacaConfigError):
+        parse_config_value("DISK_GB", "fifty", 100)
+    with pytest.raises(OasisAlpacaConfigError):
+        parse_config_value("DISK_GB", None, 100)
+
+
+def test_parse_config_value_reads_a_fractional_number():
+    """COMPARISON_TOLERANCE is a float, and '1e-6' is text until it is parsed."""
+    assert parse_config_value("COMPARISON_TOLERANCE", "1e-6", 1e-6) == 1e-6
+    assert parse_config_value("COMPARISON_TOLERANCE", "0.01", 1e-6) == 0.01
+    assert parse_config_value("COMPARISON_TOLERANCE", 0.01, 1e-6) == 0.01
+
+
+def test_parse_config_value_raises_on_a_non_numeric_float():
+    with pytest.raises(OasisAlpacaConfigError):
+        parse_config_value("COMPARISON_TOLERANCE", "not-a-number", 1e-6)
+
+
+def test_parse_config_value_reads_text_as_text():
+    """A text key with a number in it stays usable as text rather than becoming a number."""
+    assert parse_config_value("EC2_NAME", 12345, "Alpaca") == "12345"
+    assert parse_config_value("EC2_NAME", "Alpaca", "Alpaca") == "Alpaca"
+
+
+def test_parse_config_value_keeps_a_null_text_value_as_nothing():
+    """'AWS_PROFILE': null means no profile, and the string 'None' would be a profile name."""
+    assert parse_config_value("AWS_PROFILE", None, "") is None
+
+
+def test_parse_config_value_reads_a_switch_from_a_bool_or_text():
+    for value in [True, "True", "true", "TRUE"]:
+        assert parse_config_value("DEBUG", value, False) is True
+
+
+def test_parse_config_value_treats_anything_else_as_a_switch_being_off():
+    """'no' plainly means no, and an absent switch reads as off rather than as an error."""
+    for value in [False, "False", "false", "no", "", None]:
+        assert parse_config_value("DEBUG", value, False) is False
+
+
+def test_parse_config_value_reads_a_switch_before_a_number():
+    """Booleans subclass int, so a switch would otherwise be read as a number."""
+    assert parse_config_value("DEBUG", "True", False) is True
+    assert parse_config_value("DEBUG", "not a number", False) is False
+
+
+def test_load_config_parses_an_int_key_from_the_file(tmp_path):
+    """A string in the file would otherwise reach boto3, which rejects a string volume size."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"DISK_GB": "50"}))
+
+    config = load_config(config_path, [], [DISK_GB])
+
+    assert config["DISK_GB"] == 50
+
+
+def test_load_config_parses_an_int_key_from_the_environment(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({}))
+
+    with mock.patch.dict(os.environ, {"ALPACA_DISK_GB": "200"}):
+        config = load_config(config_path, [], [DISK_GB])
+
+    assert config["DISK_GB"] == 200
+
+
+def test_load_config_leaves_an_absent_int_key_absent(tmp_path):
+    """Unlike a list key, an absent number is left out so callers keep their own default."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({}))
+
+    config = load_config(config_path, [], [DISK_GB])
+
+    assert "DISK_GB" not in config
+
+
+def test_load_config_raises_on_an_unparseable_int_key(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"DISK_GB": "fifty"}))
+
+    with pytest.raises(OasisAlpacaConfigError):
+        load_config(config_path, [], [DISK_GB])
+
+
+def test_load_config_accepts_a_dict(tmp_path):
+    """A benchmark target's config is built in memory rather than written to disk first."""
+    config = load_config({"DISK_GB": "50"}, [], [DISK_GB])
+
+    assert config["DISK_GB"] == 50
+
+
+def test_load_config_does_not_mutate_a_given_dict():
+    original = {"DISK_GB": "50"}
+
+    load_config(original, [], [DISK_GB])
+
+    assert original == {"DISK_GB": "50"}
 
 
 def test_load_config_parses_a_list_key_from_the_environment(tmp_path):

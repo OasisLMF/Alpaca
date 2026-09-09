@@ -40,7 +40,7 @@ def test_run_pytest_uses_custom_args():
 
     uses_custom_args = False
     for command in commands:
-        if custom_args in command and command.startswith("pytest ."):
+        if custom_args in command and "pytest ." in command:
             uses_custom_args = True
             break
     assert uses_custom_args
@@ -69,3 +69,10 @@ def test_run_pytest_saves_to_correct_location(mock_timestamp):
             logs_output = True
             break
     assert logs_output
+
+
+def test_run_pytest_commands_reports_pytests_exit_status():
+    """Without pipefail the piped suite reports tee's exit status, so failures look green."""
+    command = next(c for c in run_pytest_commands() if "pytest ." in c)
+
+    assert command.startswith("set -o pipefail; ")

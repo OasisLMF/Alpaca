@@ -141,3 +141,27 @@ def test_run_benchmark_targets_parallel_runs_concurrently(mock_model_main, tmp_p
     run_benchmark_targets(run_configs, "parallel")
 
     assert concurrency["max"] == 2
+
+
+@mock.patch("alpaca.benchmark.executor.MAX_PARALLEL_TARGETS", 2)
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_run_benchmark_targets_parallel_caps_concurrency(mock_model_main, tmp_path):
+    """More targets than the cap queue for a slot rather than all launching an instance at once."""
+    lock = threading.Lock()
+    concurrency = {"current": 0, "max": 0}
+
+    def fake_model_main(run_config):
+        with lock:
+            concurrency["current"] += 1
+            concurrency["max"] = max(concurrency["max"], concurrency["current"])
+        time.sleep(0.1)
+        with lock:
+            concurrency["current"] -= 1
+
+    mock_model_main.side_effect = fake_model_main
+    run_configs = [_entry(f"target-{index}", tmp_path / f"target-{index}") for index in range(5)]
+
+    results = run_benchmark_targets(run_configs, "parallel")
+
+    assert concurrency["max"] == 2
+    assert [result["label"] for result in results] == [f"target-{index}" for index in range(5)]

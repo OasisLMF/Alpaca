@@ -1,3 +1,4 @@
+from alpaca.model.utils import OPTIONAL_CONFIG_MODEL
 from alpaca.remote_controller import RemoteController
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from alpaca.commands import (
@@ -10,6 +11,7 @@ from pathlib import Path
 
 import pytest
 import json
+import logging
 
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -282,7 +284,7 @@ def test_debug_config_values(tmp_path, value, expected):
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps({**CONFIG, "DEBUG": value}))
 
-    assert RemoteController(config_path).debug is expected
+    assert RemoteController(config_path, [], OPTIONAL_CONFIG_MODEL).debug is expected
 
 
 def test_shutdown_only_terminates_once():
@@ -346,42 +348,15 @@ def test_download_results_local(downloader):
     downloader.assert_called_once_with(sftp, Path(remote_path), Path(local_path))
 
 
-def test__create_config_returns_config():
+@mock.patch("alpaca.remote_controller._download_results")
+def test_download_results_reports_a_missing_remote_directory(downloader):
+    """A run that never created its output directory should say so, not raise FileNotFoundError."""
+    downloader.side_effect = FileNotFoundError
     controller = RemoteController(CONFIG_PATH)
-    config = controller._create_config(CONFIG_PATH, [], [])
-    assert config == CONFIG
+    controller.ssh = mock.Mock()
 
-
-def test__create_config_accepts_dict():
-    """Test that an already-loaded config dict can be used in place of a file path,
-    so a config built in memory for a single run doesn't need to be written to disk first.
-    """
-    controller = RemoteController(CONFIG_PATH)
-    config = controller._create_config({"AMI_ID": "explicit"}, [], [])
-    assert config == {"AMI_ID": "explicit"}
-
-
-def test__create_config_dict_is_not_mutated():
-    """Test that passing a dict doesn't let later config resolution mutate the caller's copy."""
-    controller = RemoteController(CONFIG_PATH)
-    original = {"SUBNET_ID": "mr subnet"}
-    config = controller._create_config(original, [], [("EC2_NAME", "", "")])
-    config["EC2_NAME"] = "added"
-    assert "EC2_NAME" not in original
-
-
-@mock.patch("alpaca.remote_controller.os")
-def test__create_config_uses_environment(mock_os):
-    mock_os.environ = {
-        "ALPACA_1": "2",
-        "ALPACA_3": "4",
-        "ALPACA_SUBNET_ID": "should not override config"
-    }
-    controller = RemoteController(CONFIG_PATH)
-    config = controller._create_config(CONFIG_PATH, [("1", "", ""), ("SUBNET_ID", "", "")], [("3", "", "")])
-    assert config["1"] == "2"
-    assert config["3"] == "4"
-    assert config["SUBNET_ID"] != "should not override config"
+    with pytest.raises(OasisAlpacaError, match="does not exist on the instance"):
+        controller.download_results("/missing/runs", "/path/to/place")
 
 
 @mock.patch("alpaca.remote_controller.time")
@@ -477,6 +452,34 @@ def test__create_instance_uses_defaults(mock_time):
     }
     assert controller._create_instance() == 99
     controller.ec2.run_instances.assert_called_once_with(**expected_config)
+
+
+def test_ssh_max_retries_below_one_is_rejected():
+    """Zero retries would leave both wait loops returning as though they had connected."""
+    with pytest.raises(OasisAlpacaConfigError):
+        RemoteController({**CONFIG, "SSH_MAX_RETRIES": 0})
+
+
+@mock.patch("alpaca.remote_controller.time")
+def test__create_instance_accepts_numeric_config_as_strings(mock_time):
+    """Interactive create-config answers and ALPACA_* environment overrides are always strings."""
+    mock_time.time.return_value = 17
+    alpaca_logger = logging.getLogger("alpaca")
+    original_level = alpaca_logger.level
+    try:
+        controller = RemoteController(
+            {**CONFIG, "DISK_GB": "50", "MAX_LIFETIME_HOURS": "3", "LOG_LEVEL": "debug"}, [], OPTIONAL_CONFIG_MODEL
+        )
+        controller.ec2 = mock.Mock()
+        controller.ec2.run_instances.return_value = {"Instances": [{"InstanceId": 7}]}
+
+        assert controller._create_instance() == 7
+        kwargs = controller.ec2.run_instances.call_args.kwargs
+        assert kwargs["BlockDeviceMappings"][0]["Ebs"]["VolumeSize"] == 50
+        assert kwargs["TagSpecifications"][0]["Tags"][1]["Value"] == str(17 + 3 * 60 * 60)
+        assert alpaca_logger.level == logging.DEBUG
+    finally:
+        alpaca_logger.setLevel(original_level)
 
 
 def test__wait_for_instance():
@@ -780,3 +783,14 @@ def test_upload_model_runs_model_requirements():
     commands_called = [call[0][0] for call in controller.run_commands.call_args_list]
     # Check that model_requirements_commands is called
     assert any("requirements" in str(cmd) for cmd in commands_called)
+
+
+def test_upload_model_rejects_an_unrecognised_location():
+    """Neither GitHub nor S3 downloaded nothing at all, then failed later on an empty home."""
+    controller = RemoteController(CONFIG_PATH)
+    controller.run_commands = mock.Mock()
+
+    with pytest.raises(OasisAlpacaConfigError):
+        controller.upload_model("/a/local/path")
+
+    controller.run_commands.assert_not_called()
