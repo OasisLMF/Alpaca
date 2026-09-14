@@ -48,3 +48,22 @@ def test_main_raises_when_ept_file_is_missing(tmp_path):
 
     with pytest.raises(OasisAlpacaError):
         main(run_directory)
+
+
+def test_main_includes_the_map_when_location_csv_is_present(tmp_path):
+    run_directory = _write_run(tmp_path)
+    input_dir = run_directory / "losses-20260804135955" / "input"
+    input_dir.mkdir(parents=True)
+    (input_dir / "location.csv").write_text("LocNumber,Latitude,Longitude,BuildingTIV\n1,52.0,-0.9,1000.0\n")
+
+    dashboard_path = main(run_directory)
+
+    assert "exposure-map" in dashboard_path.read_text()
+
+
+def test_main_omits_the_map_when_location_csv_is_absent(tmp_path):
+    run_directory = _write_run(tmp_path)
+
+    dashboard_path = main(run_directory)
+
+    assert "exposure-map" not in dashboard_path.read_text()

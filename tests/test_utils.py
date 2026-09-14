@@ -42,6 +42,7 @@ def test_download_results():
             if path == "/remote/input":
                 return [
                     FakeAttr("keys.csv", stat.S_IFREG),
+                    FakeAttr("location.csv", stat.S_IFREG),
                     FakeAttr("ignore.txt", stat.S_IFREG),
                 ]
             if path == "/remote/nested":
@@ -58,9 +59,10 @@ def test_download_results():
 
         expected_calls = [
             mock.call("/remote/input/keys.csv", str(local_root / "input" / "keys.csv")),
+            mock.call("/remote/input/location.csv", str(local_root / "input" / "location.csv")),
             mock.call("/remote/data.csv", str(local_root / "data.csv")),
             mock.call("/remote/nested/nested.txt", str(local_root / "nested" / "nested.txt")),
         ]
 
         sftp.get.assert_has_calls(expected_calls, any_order=True)
-        assert sftp.get.call_count == 3
+        assert sftp.get.call_count == 4

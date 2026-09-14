@@ -134,6 +134,7 @@ def download_only_important_command(loc_from, loc_to):
     Included despite exclusions:
         - */input/keys.csv
         - */input/keys-errors.csv
+        - */input/location.csv
 
     Args:
         loc_from: Source path (local or S3 URI).
@@ -150,7 +151,8 @@ def download_only_important_command(loc_from, loc_to):
         "--exclude '*/work/*' "
         "--exclude '*/input/*' "
         "--include '*/input/keys.csv' "
-        "--include '*/input/keys-errors.csv'"
+        "--include '*/input/keys-errors.csv' "
+        "--include '*/input/location.csv'"
     )
     return command
 

@@ -1,6 +1,7 @@
 from alpaca.benchmark.comparison import find_output_dir
 from alpaca.dashboard.charts import build_step_chart_data, parse_ept_csv
 from alpaca.dashboard.html import build_dashboard_html, write_dashboard
+from alpaca.dashboard.map import parse_location_csv
 from alpaca.exceptions import OasisAlpacaError
 
 import logging
@@ -8,6 +9,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 EPT_FILENAME = "gul_S1_ept.csv"
+LOCATION_FILENAME = "location.csv"
 
 
 def main(run_directory):
@@ -31,7 +33,13 @@ def main(run_directory):
 
     series = parse_ept_csv(ept_path)
     chart_data = build_step_chart_data(series)
-    html_text = build_dashboard_html(chart_data)
+
+    location_path = output_dir.parent / "input" / LOCATION_FILENAME
+    map_points = parse_location_csv(location_path) if location_path.exists() else None
+    if map_points is None:
+        logger.info(f"No '{LOCATION_FILENAME}' found alongside the run, skipping the exposure map")
+
+    html_text = build_dashboard_html(chart_data, map_points)
 
     dashboard_path = write_dashboard(html_text, run_directory)
     logger.info(f"Dashboard written to {dashboard_path}")

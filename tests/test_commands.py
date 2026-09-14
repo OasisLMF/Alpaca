@@ -170,6 +170,7 @@ def test_download_only_important_excludes_fifo():
     assert "--exclude '*/input/*'" in command
     assert "--include '*/input/keys.csv'" in command
     assert "--include '*/input/keys-errors.csv'" in command
+    assert "--include '*/input/location.csv'" in command
 
 
 def test_model_requirements_checks_requirements():

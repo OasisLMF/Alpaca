@@ -39,7 +39,7 @@ def _download_results(sftp, results_dir_path_remote, results_dir_path_local):
 
     Filtering rules:
         - Skipped entirely: 'fifo', 'static', 'work' directories
-        - 'input' directory: Only downloads 'keys.csv' and 'keys-errors.csv'
+        - 'input' directory: Only downloads 'keys.csv', 'keys-errors.csv' and 'location.csv'
         - All other files and directories: Downloaded recursively
 
     Args:
@@ -53,7 +53,7 @@ def _download_results(sftp, results_dir_path_remote, results_dir_path_local):
     """
     results_dir_path_local.mkdir(parents=True, exist_ok=True)
     skip_names = {"fifo", "static", "work"}
-    input_files = {'keys.csv', 'keys-errors.csv'}
+    input_files = {'keys.csv', 'keys-errors.csv', 'location.csv'}
     for entry in sftp.listdir_attr(str(results_dir_path_remote)):
         # Get rid of fluff
         if entry.filename == "input":
