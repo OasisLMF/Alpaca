@@ -2,6 +2,7 @@ from alpaca.model.main import main as model_main
 from alpaca.pytest.main import main as pytest_main
 from alpaca.api.main import main as api_main
 from alpaca.benchmark.main import main as benchmark_main
+from alpaca.dashboard.main import main as dashboard_main
 
 HELP_ARGS = {'h', '-h', 'help', '-help', '--help'}
 
@@ -36,3 +37,11 @@ def run_benchmark(args):
         print("Usage: 'alpaca benchmark <config.json>'")
     else:
         benchmark_main(args[0])
+
+
+def run_dashboard(args):
+    """Builds a run dashboard with args[0] as the downloaded run directory."""
+    if len(args) == 0 or args[0] in HELP_ARGS:
+        print("Usage: 'alpaca dashboard <run-directory>'")
+    else:
+        dashboard_main(args[0])

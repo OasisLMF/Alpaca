@@ -1,6 +1,6 @@
 import sys
 from alpaca.cli.images import print_alpaca
-from alpaca.cli.run_start import HELP_ARGS, run_model, run_api, run_pytest, run_benchmark
+from alpaca.cli.run_start import HELP_ARGS, run_model, run_api, run_pytest, run_benchmark, run_dashboard
 from alpaca.cli.config_router import create_config_router
 from alpaca.logging_context import TargetFilter
 
@@ -49,6 +49,7 @@ ALPACA_COMMANDS = {
     "pytest": run_pytest,
     "api": run_api,
     "benchmark": run_benchmark,
+    "dashboard": run_dashboard,
     "version": alpaca_version
 }
 
