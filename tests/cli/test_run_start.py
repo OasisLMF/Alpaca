@@ -114,7 +114,23 @@ def test_run_benchmark_calls_main_with_config(mock_main):
     """Test that run_benchmark calls benchmark main with config file path."""
     config_path = "benchmark_config.json"
     run_benchmark([config_path])
-    mock_main.assert_called_once_with(config_path)
+    mock_main.assert_called_once_with(config_path, generate_dashboard=False)
+
+
+@mock.patch("alpaca.cli.run_start.benchmark_main")
+def test_run_benchmark_passes_dashboard_flag(mock_main):
+    """Test that a trailing '--dashboard' flag reaches benchmark main."""
+    config_path = "benchmark_config.json"
+    run_benchmark([config_path, "--dashboard"])
+    mock_main.assert_called_once_with(config_path, generate_dashboard=True)
+
+
+@mock.patch("alpaca.cli.run_start.benchmark_main")
+def test_run_benchmark_accepts_the_single_dash_dashboard_flag_too(mock_main):
+    """Test that '-dashboard' (single dash) is accepted as well as '--dashboard'."""
+    config_path = "benchmark_config.json"
+    run_benchmark([config_path, "-dashboard"])
+    mock_main.assert_called_once_with(config_path, generate_dashboard=True)
 
 
 @mock.patch("alpaca.cli.run_start.benchmark_main")

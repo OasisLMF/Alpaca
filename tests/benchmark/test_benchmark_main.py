@@ -1,5 +1,5 @@
 from alpaca.benchmark.main import main
-from alpaca.exceptions import OasisAlpacaConfigError
+from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from pathlib import Path
 from unittest import mock
 
@@ -710,3 +710,61 @@ def test_main_report_notes_comparison_skipped_when_a_target_failed(mock_model_ma
     report_text = output["report_path"].read_text()
     assert "Output comparison skipped" in report_text
     assert "Timing comparison" not in report_text
+
+
+@mock.patch("alpaca.benchmark.main.dashboard_main")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_does_not_generate_dashboards_by_default(mock_model_main, mock_dashboard_main, tmp_path):
+    """Test that dashboards are only built when explicitly asked for via generate_dashboard."""
+    config_path = _write_config(tmp_path)
+
+    main(config_path)
+
+    mock_dashboard_main.assert_not_called()
+
+
+@mock.patch("alpaca.benchmark.main.dashboard_main")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_generates_a_dashboard_for_every_successful_target_when_requested(
+    mock_model_main, mock_dashboard_main, tmp_path
+):
+    """Test that generate_dashboard=True builds a dashboard for each successful target's
+    own result directory.
+    """
+    results_dir = tmp_path / "results"
+    config_path = _write_config(tmp_path, {"RESULT_DIRECTORY": str(results_dir)})
+
+    main(config_path, generate_dashboard=True)
+
+    called_directories = {Path(call.args[0]) for call in mock_dashboard_main.call_args_list}
+    assert called_directories == {results_dir / "PiWind-2.3.3", results_dir / "PiWind-2.4.9"}
+
+
+@mock.patch("alpaca.benchmark.main.dashboard_main")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_skips_dashboard_for_a_failed_target(mock_model_main, mock_dashboard_main, tmp_path):
+    """Test that a failed target, with no output to chart, is not passed to the dashboard."""
+    mock_model_main.side_effect = [None, RuntimeError("boom")]
+    config_path = _write_config(tmp_path)
+
+    main(config_path, generate_dashboard=True)
+
+    assert mock_dashboard_main.call_count == 1
+
+
+@mock.patch("alpaca.benchmark.main.dashboard_main")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_logs_and_continues_when_a_targets_dashboard_cannot_be_built(
+    mock_model_main, mock_dashboard_main, tmp_path, caplog
+):
+    """A target missing its EPT output (e.g. an old stored baseline) shouldn't fail the
+    whole benchmark just because it has nothing to chart.
+    """
+    mock_dashboard_main.side_effect = OasisAlpacaError("No 'gul_S1_ept.csv' found")
+    config_path = _write_config(tmp_path)
+
+    with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.main"):
+        output = main(config_path, generate_dashboard=True)
+
+    assert "Skipping dashboard for target" in caplog.text
+    assert output["comparison"] is not None or output["results"]

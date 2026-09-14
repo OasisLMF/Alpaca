@@ -10,6 +10,7 @@ from alpaca.benchmark.s3_baseline import (
 )
 from alpaca.benchmark.timing import fastest_result, resolve_model_runtime, sort_results_by_speed
 from alpaca.config import load_config
+from alpaca.dashboard.main import main as dashboard_main
 from alpaca.exceptions import OasisAlpacaError
 from pathlib import Path
 
@@ -18,7 +19,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def main(config_file):
+def main(config_file, generate_dashboard=False):
     """Load and validate a benchmark configuration, run its targets and report on them.
 
     Every combination of REPO_LOCATIONS and OASISLMF_VERSIONS/OASISLMF_BRANCHES is a target,
@@ -32,6 +33,8 @@ def main(config_file):
 
     Args:
         config_file: Path to the JSON configuration file for the benchmark run.
+        generate_dashboard: Whether to build a dashboard.html (see alpaca.dashboard.main)
+            for every successful target, from the 'alpaca benchmark ... --dashboard' flag.
 
     Returns:
         dict: 'results' (one dict per target, in target order, see
@@ -50,6 +53,8 @@ def main(config_file):
     results = _resolve_targets(config, targets, plan["execution_mode"])
     if config.get("PUBLISH_BASELINE", False):
         _publish_baselines(config, targets, results)
+    if generate_dashboard:
+        _generate_dashboards(targets, results)
     comparison_report, skip_reason = _compare_targets(targets, results, relative_tolerance)
 
     print(build_report_text(results, comparison_report, skip_reason, colour=True))
@@ -189,3 +194,23 @@ def _publish_baselines(config, targets, results):
         upload_baseline(
             config["BENCHMARK_BUCKET"], version, target["run_config"]["RESULT_DIRECTORY"], config
         )
+
+
+def _generate_dashboards(targets, results):
+    """Build a dashboard.html for every successful target.
+
+    A target's EPT file can be missing (e.g. a stored S3 baseline published before that
+    output was captured), so a target that can't be charted is logged and skipped rather
+    than failing the whole benchmark over a nice-to-have visualisation.
+
+    Args:
+        targets: List of targets as returned by build_benchmark_targets.
+        results: The matching results, in the same order (see _resolve_targets).
+    """
+    for target, result in zip(targets, results):
+        if result["status"] != "success":
+            continue
+        try:
+            dashboard_main(target["run_config"]["RESULT_DIRECTORY"])
+        except OasisAlpacaError as error:
+            logger.warning(f"Skipping dashboard for target '{target['label']}': {error}")

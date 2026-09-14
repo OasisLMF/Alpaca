@@ -5,6 +5,7 @@ from alpaca.benchmark.main import main as benchmark_main
 from alpaca.dashboard.main import main as dashboard_main
 
 HELP_ARGS = {'h', '-h', 'help', '-help', '--help'}
+DASHBOARD_FLAGS = {'-dashboard', '--dashboard'}
 
 
 def run_model(args):
@@ -32,11 +33,14 @@ def run_api(args):
 
 
 def run_benchmark(args):
-    """Validates a benchmark alpaca config with args[0] as config file."""
+    """Validates a benchmark alpaca config with args[0] as config file, and args[1:] as
+    optional flags (currently only '--dashboard'/'-dashboard', to build a run dashboard for
+    every successful target once the benchmark finishes).
+    """
     if len(args) == 0 or args[0] in HELP_ARGS:
-        print("Usage: 'alpaca benchmark <config.json>'")
+        print("Usage: 'alpaca benchmark <config.json> [--dashboard]'")
     else:
-        benchmark_main(args[0])
+        benchmark_main(args[0], generate_dashboard=bool(DASHBOARD_FLAGS.intersection(args[1:])))
 
 
 def run_dashboard(args):
