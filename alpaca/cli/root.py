@@ -2,6 +2,7 @@ import sys
 from alpaca.cli.images import print_alpaca
 from alpaca.cli.run_start import HELP_ARGS, run_model, run_api, run_pytest, run_benchmark
 from alpaca.cli.config_router import create_config_router
+from alpaca.logging_context import TargetFilter
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -10,10 +11,10 @@ import logging
 
 def main():
     """Main entry point for the Alpaca CLI. Goes to subcommand of first input or help if none given."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s%(target)s: %(message)s"))
+    handler.addFilter(TargetFilter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
     args = sys.argv
     if len(args) == 1:
         alpaca_help()
