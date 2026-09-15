@@ -12,6 +12,7 @@ import pytest
 REGION = "us-east-1"
 CONFIG = {"AWS_REGION": REGION}
 PIWIND = "https://github.com/OasisLMF/OasisPiWind"
+LEAGUE = "https://github.com/OasisLMF/OasisLeague"
 
 
 def _make_bucket(name="alpaca-benchmark"):
@@ -34,11 +35,11 @@ def test_upload_baseline_uploads_output_and_performance_files(tmp_path):
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"}, result_text="COMPLETED: x in 1.0s\n")
 
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
 
     client = boto3.client("s3", region_name=REGION)
-    assert client.get_object(Bucket=bucket, Key="2.5.4/output/summary.csv")["Body"].read() == b"a,b\n1,2\n"
-    assert client.get_object(Bucket=bucket, Key="2.5.4/performance/result.txt")["Body"].read() == b"COMPLETED: x in 1.0s\n"
+    assert client.get_object(Bucket=bucket, Key="PiWind/2.5.4/output/summary.csv")["Body"].read() == b"a,b\n1,2\n"
+    assert client.get_object(Bucket=bucket, Key="PiWind/2.5.4/performance/result.txt")["Body"].read() == b"COMPLETED: x in 1.0s\n"
 
 
 @mock_aws
@@ -46,21 +47,21 @@ def test_upload_baseline_skips_performance_upload_when_no_result_file(tmp_path):
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
 
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
 
     client = boto3.client("s3", region_name=REGION)
     with pytest.raises(client.exceptions.NoSuchKey):
-        client.get_object(Bucket=bucket, Key="2.5.4/performance/result.txt")
+        client.get_object(Bucket=bucket, Key="PiWind/2.5.4/performance/result.txt")
 
 
 @mock_aws
 def test_upload_baseline_warns_when_overwriting_existing_baseline(tmp_path, caplog):
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
 
     with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.s3_baseline"):
-        upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+        upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
 
     assert "Overwriting existing baseline" in caplog.text
 
@@ -70,19 +71,34 @@ def test_upload_baseline_supports_bucket_prefix(tmp_path):
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
 
-    upload_baseline(f"s3://{bucket}/some/prefix", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}/some/prefix", "PiWind", "2.5.4", run_directory, CONFIG)
 
     client = boto3.client("s3", region_name=REGION)
-    client.get_object(Bucket=bucket, Key="some/prefix/2.5.4/output/summary.csv")
+    client.get_object(Bucket=bucket, Key="some/prefix/PiWind/2.5.4/output/summary.csv")
+
+
+@mock_aws
+def test_upload_baseline_keeps_different_models_separate(tmp_path):
+    """The same version published for two different models must not collide."""
+    bucket = _make_bucket()
+    piwind_directory = _write_run_directory(tmp_path / "piwind", {"summary.csv": "a,b\n1,2\n"})
+    league_directory = _write_run_directory(tmp_path / "league", {"summary.csv": "x,y\n3,4\n"})
+
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", piwind_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "League", "2.5.4", league_directory, CONFIG)
+
+    client = boto3.client("s3", region_name=REGION)
+    assert client.get_object(Bucket=bucket, Key="PiWind/2.5.4/output/summary.csv")["Body"].read() == b"a,b\n1,2\n"
+    assert client.get_object(Bucket=bucket, Key="League/2.5.4/output/summary.csv")["Body"].read() == b"x,y\n3,4\n"
 
 
 @mock_aws
 def test_download_baseline_downloads_output_and_performance_files(tmp_path):
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path / "run", {"summary.csv": "a,b\n1,2\n"}, result_text="COMPLETED: x in 1.0s\n")
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
 
-    local_directory = download_baseline(f"s3://{bucket}", "2.5.4", tmp_path / "downloaded", CONFIG)
+    local_directory = download_baseline(f"s3://{bucket}", "PiWind", "2.5.4", tmp_path / "downloaded", CONFIG)
 
     assert local_directory == tmp_path / "downloaded"
     assert (local_directory / "output" / "summary.csv").read_text() == "a,b\n1,2\n"
@@ -93,10 +109,10 @@ def test_download_baseline_downloads_output_and_performance_files(tmp_path):
 def test_download_baseline_warns_when_no_performance_data(tmp_path, caplog):
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path / "run", {"summary.csv": "a,b\n1,2\n"})
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
 
     with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.s3_baseline"):
-        download_baseline(f"s3://{bucket}", "2.5.4", tmp_path / "downloaded", CONFIG)
+        download_baseline(f"s3://{bucket}", "PiWind", "2.5.4", tmp_path / "downloaded", CONFIG)
 
     assert "No stored performance metrics found" in caplog.text
     assert not (tmp_path / "downloaded" / "result.txt").exists()
@@ -107,7 +123,18 @@ def test_download_baseline_raises_when_no_stored_output(tmp_path):
     bucket = _make_bucket()
 
     with pytest.raises(OasisAlpacaError):
-        download_baseline(f"s3://{bucket}", "9.9.9", tmp_path / "downloaded", CONFIG)
+        download_baseline(f"s3://{bucket}", "PiWind", "9.9.9", tmp_path / "downloaded", CONFIG)
+
+
+@mock_aws
+def test_download_baseline_raises_when_version_exists_under_a_different_model(tmp_path):
+    """A model/version baseline can't be downloaded under the wrong model."""
+    bucket = _make_bucket()
+    run_directory = _write_run_directory(tmp_path / "run", {"summary.csv": "a,b\n1,2\n"})
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
+
+    with pytest.raises(OasisAlpacaError):
+        download_baseline(f"s3://{bucket}", "League", "2.5.4", tmp_path / "downloaded", CONFIG)
 
 
 @mock_aws
@@ -117,8 +144,8 @@ def test_upload_then_download_baseline_round_trip_matches(tmp_path):
         tmp_path / "run", {"summary.csv": "a,b\n1,2\n", "other.csv": "x,y\n3,4\n"}, result_text="COMPLETED: x in 1.0s\n"
     )
 
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
-    local_directory = download_baseline(f"s3://{bucket}", "2.5.4", tmp_path / "downloaded", CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
+    local_directory = download_baseline(f"s3://{bucket}", "PiWind", "2.5.4", tmp_path / "downloaded", CONFIG)
 
     assert {p.name for p in (local_directory / "output").iterdir()} == {"summary.csv", "other.csv"}
 
@@ -151,28 +178,28 @@ def test_resolve_stored_versions_finds_only_the_stored_versions(tmp_path):
     """A version already in the bucket is reused; one that isn't has to be run."""
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
 
     stored = resolve_stored_versions({
         **CONFIG, "BENCHMARK_BUCKET": f"s3://{bucket}", "REPO_LOCATIONS": [PIWIND],
         "OASISLMF_VERSIONS": ["2.5.6", "2.5.4"],
     })
 
-    assert stored == {"2.5.4"}
+    assert stored == {("PiWind", "2.5.4")}
 
 
 @mock_aws
 def test_resolve_stored_versions_supports_bucket_prefix(tmp_path):
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
-    upload_baseline(f"s3://{bucket}/some/prefix", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}/some/prefix", "PiWind", "2.5.4", run_directory, CONFIG)
 
     stored = resolve_stored_versions({
         **CONFIG, "BENCHMARK_BUCKET": f"s3://{bucket}/some/prefix", "REPO_LOCATIONS": [PIWIND],
         "OASISLMF_VERSIONS": ["2.5.4"],
     })
 
-    assert stored == {"2.5.4"}
+    assert stored == {("PiWind", "2.5.4")}
 
 
 def test_resolve_stored_versions_returns_nothing_without_a_bucket():
@@ -216,7 +243,7 @@ def test_resolve_stored_versions_ignores_a_version_stored_without_output(tmp_pat
     """
     bucket = _make_bucket()
     boto3.client("s3", region_name=REGION).put_object(
-        Bucket=bucket, Key="2.5.4/performance/result.txt", Body=b"COMPLETED: x in 1.0s\n"
+        Bucket=bucket, Key="PiWind/2.5.4/performance/result.txt", Body=b"COMPLETED: x in 1.0s\n"
     )
     config = {
         **CONFIG, "BENCHMARK_BUCKET": f"s3://{bucket}", "REPO_LOCATIONS": [PIWIND], "OASISLMF_VERSIONS": ["2.5.4"],
@@ -230,7 +257,7 @@ def test_resolve_stored_versions_skips_reuse_when_publishing(tmp_path, caplog):
     """Republishing a version means running it, not reusing what's already stored."""
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
     config = {
         **CONFIG, "BENCHMARK_BUCKET": f"s3://{bucket}", "REPO_LOCATIONS": [PIWIND],
         "OASISLMF_VERSIONS": ["2.5.4"], "PUBLISH_BASELINE": "True",
@@ -243,35 +270,34 @@ def test_resolve_stored_versions_skips_reuse_when_publishing(tmp_path, caplog):
 
 
 @mock_aws
-def test_resolve_stored_versions_skips_reuse_for_multiple_locations(tmp_path, caplog):
-    """Baselines are keyed by version alone, so they can't stand in for a specific model."""
+def test_resolve_stored_versions_finds_baselines_per_model_with_multiple_locations(tmp_path):
+    """Baselines are keyed by model and version together, so each REPO_LOCATIONS entry is
+    checked on its own: a baseline stored for one model doesn't stand in for another.
+    """
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
     config = {
         **CONFIG, "BENCHMARK_BUCKET": f"s3://{bucket}", "OASISLMF_VERSIONS": ["2.5.4"],
-        "REPO_LOCATIONS": [PIWIND, "https://github.com/OasisLMF/OasisLeague"],
+        "REPO_LOCATIONS": [PIWIND, LEAGUE],
     }
 
-    with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.s3_baseline"):
-        assert resolve_stored_versions(config) == set()
-
-    assert "keyed by OasisLMF version only" in caplog.text
+    assert resolve_stored_versions(config) == {("PiWind", "2.5.4")}
 
 
 @mock_aws
 def test_resolve_stored_versions_finds_several_stored_versions(tmp_path):
     bucket = _make_bucket()
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
-    upload_baseline(f"s3://{bucket}", "2.5.6", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.6", run_directory, CONFIG)
 
     stored = resolve_stored_versions({
         **CONFIG, "BENCHMARK_BUCKET": f"s3://{bucket}", "REPO_LOCATIONS": [PIWIND],
         "OASISLMF_VERSIONS": ["2.5.6", "2.5.4", "2.4.9"],
     })
 
-    assert stored == {"2.5.6", "2.5.4"}
+    assert stored == {("PiWind", "2.5.6"), ("PiWind", "2.5.4")}
 
 
 @mock_aws
@@ -279,10 +305,10 @@ def test_download_baseline_skips_a_directory_marker_key(tmp_path):
     """A console-created folder shows up as a key ending in '/', which isn't a file."""
     bucket = _make_bucket()
     client = boto3.client("s3", region_name=REGION)
-    client.put_object(Bucket=bucket, Key="2.5.4/output/", Body=b"")
-    client.put_object(Bucket=bucket, Key="2.5.4/output/summary.csv", Body=b"a,b\n1,2\n")
+    client.put_object(Bucket=bucket, Key="PiWind/2.5.4/output/", Body=b"")
+    client.put_object(Bucket=bucket, Key="PiWind/2.5.4/output/summary.csv", Body=b"a,b\n1,2\n")
 
-    local_directory = download_baseline(f"s3://{bucket}", "2.5.4", tmp_path / "downloaded", CONFIG)
+    local_directory = download_baseline(f"s3://{bucket}", "PiWind", "2.5.4", tmp_path / "downloaded", CONFIG)
 
     assert [path.name for path in (local_directory / "output").iterdir()] == ["summary.csv"]
 
@@ -294,7 +320,7 @@ def test_upload_baseline_skips_directories_inside_the_output_directory(tmp_path)
     run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
     (run_directory / "losses-x" / "output" / "nested").mkdir()
 
-    upload_baseline(f"s3://{bucket}", "2.5.4", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", "2.5.4", run_directory, CONFIG)
 
-    listing = boto3.client("s3", region_name=REGION).list_objects_v2(Bucket=bucket, Prefix="2.5.4/output/")
-    assert [obj["Key"] for obj in listing["Contents"]] == ["2.5.4/output/summary.csv"]
+    listing = boto3.client("s3", region_name=REGION).list_objects_v2(Bucket=bucket, Prefix="PiWind/2.5.4/output/")
+    assert [obj["Key"] for obj in listing["Contents"]] == ["PiWind/2.5.4/output/summary.csv"]

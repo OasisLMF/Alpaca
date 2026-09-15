@@ -107,7 +107,7 @@ def _download_stored_target(config, target):
         "step_timings": {},
     }
     try:
-        download_baseline(config["BENCHMARK_BUCKET"], target["version"], result_directory, config)
+        download_baseline(config["BENCHMARK_BUCKET"], target["model"], target["version"], result_directory, config)
     except Exception:
         logger.exception(f"Downloading the stored baseline for target '{target['label']}' failed")
         return {**result, "status": "failed"}
@@ -187,5 +187,5 @@ def _publish_baselines(config, targets, results):
         if not version or result["status"] != "success" or target["source"] == STORED_SOURCE:
             continue
         upload_baseline(
-            config["BENCHMARK_BUCKET"], version, target["run_config"]["RESULT_DIRECTORY"], config
+            config["BENCHMARK_BUCKET"], target["model"], version, target["run_config"]["RESULT_DIRECTORY"], config
         )

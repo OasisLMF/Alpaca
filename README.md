@@ -253,17 +253,17 @@ are read from local files, a benchmark needs a local `RESULT_DIRECTORY` and reje
 ### Stored S3 baselines
 
 Setting `BENCHMARK_BUCKET` lets a benchmark reuse results instead of paying to re-run them.
-Baselines are stored per OasisLMF version as `{version}/output/*` and
-`{version}/performance/result.txt`.
+Baselines are stored per model and OasisLMF version as `{model}/{version}/output/*` and
+`{model}/{version}/performance/result.txt` (e.g. `PiWind/2.5.6/output/*`).
 
-* Any `OASISLMF_VERSIONS` entry already stored in the bucket is downloaded and treated
-  exactly like a run that just finished, rather than being run on EC2. Because baselines are
-  keyed by version alone, this only applies when the benchmark has a single `REPO_LOCATIONS`
-  entry; with more, every version runs live.
+* Any `REPO_LOCATIONS`/`OASISLMF_VERSIONS` pair already stored in the bucket is downloaded
+  and treated exactly like a run that just finished, rather than being run on EC2. Because
+  baselines are keyed by model and version together, this applies independently to every
+  `REPO_LOCATIONS` entry.
 * `PUBLISH_BASELINE` set to `True` runs every version target live and publishes its output
-  and timings as that version's new stored baseline, overwriting anything already there. It
-  requires `BENCHMARK_BUCKET` and at least one `OASISLMF_VERSIONS` entry; branch targets are
-  skipped, having no version to publish under.
+  and timings as that model/version's new stored baseline, overwriting anything already
+  there. It requires `BENCHMARK_BUCKET` and at least one `OASISLMF_VERSIONS` entry; branch
+  targets are skipped, having no version to publish under.
 
 ## Results
 

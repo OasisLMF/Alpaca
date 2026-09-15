@@ -189,9 +189,10 @@ def build_benchmark_targets(config, stored_versions=()):
 
     Args:
         config: Validated benchmark configuration dictionary.
-        stored_versions: Versions already held in BENCHMARK_BUCKET (see
-            alpaca.benchmark.s3_baseline.resolve_stored_versions). A version target listed
-            here is marked as stored, and is downloaded instead of run on EC2.
+        stored_versions: (model, version) pairs already held in BENCHMARK_BUCKET (see
+            alpaca.benchmark.s3_baseline.resolve_stored_versions). A version target whose
+            (model, version) pair is listed here is marked as stored, and is downloaded
+            instead of run on EC2.
 
     Returns:
         list[dict]: One entry per target, location by location, each with keys 'label' (a
@@ -242,7 +243,7 @@ def build_benchmark_targets(config, stored_versions=()):
                 "model": model,
                 "version": version_label,
                 "source_label": source_label(branch, version),
-                "source": STORED_SOURCE if version and version in stored_versions else LIVE_SOURCE,
+                "source": STORED_SOURCE if version and (model, version) in stored_versions else LIVE_SOURCE,
                 "run_config": run_config,
             })
     return targets
