@@ -59,6 +59,13 @@ REPO_LOCATIONS = (
     ["https://github.com/OasisLMF/OasisPiWind"]
 )
 RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket) or local (./path/to/local)", "./runs")
+RUN_TEST_SUITE = (
+    "RUN_TEST_SUITE",
+    "When 'True' (benchmark mode only), run every REPO_LOCATIONS entry as a test suite instead "
+    "of a single model run: uploads it to one EC2 instance and runs its tests/*/oasislmf.json "
+    "configs one after another via pytest, rather than PATH_TO_OASISLMF_JSON",
+    False
+)
 SECURITY_GROUP_ID = ("SECURITY_GROUP_ID", "Security group id of EC2 instance", "MySecurityGroup")
 SSH_MAX_RETRIES = ("SSH_MAX_RETRIES", "Maximum number of SSH-over-SSM connection attempts before timeout", 60)
 SUBNET_ID = ("SUBNET_ID", "Subnet id of EC2 instance", "MySubnetID")

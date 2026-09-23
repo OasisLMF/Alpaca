@@ -168,6 +168,25 @@ def test_build_benchmark_targets_carries_over_shared_keys():
         assert run_config["PATH_TO_OASISLMF_JSON"] == "./oasislmf.json"
 
 
+def test_build_benchmark_targets_carries_over_run_test_suite():
+    """RUN_TEST_SUITE is a whole-benchmark switch, not per-location, so every target needs
+    it in its own run_config for alpaca.benchmark.executor to dispatch on.
+    """
+    config = {**BASE_BENCHMARK_CONFIG, "RUN_TEST_SUITE": True}
+    targets = build_benchmark_targets(config)
+
+    assert all(target["run_config"]["RUN_TEST_SUITE"] is True for target in targets)
+
+
+def test_build_benchmark_targets_omits_run_test_suite_when_unset():
+    """A key absent from the config shouldn't be filled in with a default in run_config,
+    matching how every other shared key already behaves.
+    """
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG)
+
+    assert "RUN_TEST_SUITE" not in targets[0]["run_config"]
+
+
 def test_build_benchmark_targets_uses_separate_result_directories():
     targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG)
 

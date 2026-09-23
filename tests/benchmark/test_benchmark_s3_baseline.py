@@ -169,6 +169,15 @@ def test_validate_passes_when_publish_baseline_fully_configured():
     })
 
 
+def test_validate_raises_when_publish_baseline_combined_with_run_test_suite():
+    """A test suite has no single output to store as a baseline."""
+    with pytest.raises(OasisAlpacaConfigError):
+        validate_s3_baseline_config({
+            "PUBLISH_BASELINE": "True", "BENCHMARK_BUCKET": "s3://alpaca-benchmark", "OASISLMF_VERSIONS": ["2.5.4"],
+            "RUN_TEST_SUITE": True,
+        })
+
+
 def test_validate_passes_when_nothing_configured():
     validate_s3_baseline_config({})
 

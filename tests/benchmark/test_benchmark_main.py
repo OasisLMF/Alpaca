@@ -636,6 +636,53 @@ def test_main_raises_on_invalid_execution_mode(tmp_path):
         main(config_path)
 
 
+def test_main_raises_without_path_to_oasislmf_json_or_run_test_suite(tmp_path):
+    """An ordinary target with neither key has no model config to run."""
+    config_path = _write_config(tmp_path)
+    config = json.loads(config_path.read_text())
+    del config["PATH_TO_OASISLMF_JSON"]
+    config_path.write_text(json.dumps(config))
+
+    with pytest.raises(OasisAlpacaConfigError):
+        main(config_path)
+
+
+@mock.patch("alpaca.benchmark.executor.testsuite_main")
+def test_main_allows_missing_path_to_oasislmf_json_when_run_test_suite(mock_testsuite_main, tmp_path):
+    config_path = _write_config(tmp_path, {"RUN_TEST_SUITE": True, "OASISLMF_VERSIONS": ["2.5.6"]})
+    config = json.loads(config_path.read_text())
+    del config["PATH_TO_OASISLMF_JSON"]
+    config_path.write_text(json.dumps(config))
+
+    output = main(config_path)
+
+    assert mock_testsuite_main.call_count == 1
+    assert output["results"][0]["status"] == "success"
+
+
+@mock.patch("alpaca.benchmark.executor.testsuite_main")
+def test_main_skips_comparison_for_run_test_suite(mock_testsuite_main, tmp_path, capsys):
+    """A test suite has no single output per target to diff against another's."""
+    config_path = _write_config(tmp_path, {"RUN_TEST_SUITE": True})
+
+    output = main(config_path)
+
+    assert output["comparison"] is None
+    assert "no single output to compare" in capsys.readouterr().out
+
+
+@mock.patch("alpaca.benchmark.executor.testsuite_main")
+def test_main_dispatches_every_target_to_testsuite_main_when_run_test_suite(mock_testsuite_main, tmp_path):
+    config_path = _write_config(tmp_path, {"RUN_TEST_SUITE": True})
+
+    output = main(config_path)
+
+    assert mock_testsuite_main.call_count == 2
+    assert [r["status"] for r in output["results"]] == ["success", "success"]
+    run_configs_called = [call.args[0] for call in mock_testsuite_main.call_args_list]
+    assert all(run_config["RUN_TEST_SUITE"] is True for run_config in run_configs_called)
+
+
 @mock.patch("alpaca.benchmark.main.build_comparison_reports")
 @mock.patch("alpaca.benchmark.executor.model_main")
 def test_main_writes_report_file_alongside_result_directories(mock_model_main, mock_build_comparison, tmp_path):

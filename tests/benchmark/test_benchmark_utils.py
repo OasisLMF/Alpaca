@@ -1,8 +1,11 @@
-from alpaca.benchmark.utils import REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK
+from alpaca.benchmark.utils import REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_test_suite_config
+from alpaca.exceptions import OasisAlpacaConfigError
 from alpaca.inputs import (
     REPO_LOCATION, REPO_LOCATIONS, OASISLMF_VERSION, OASISLMF_VERSIONS, BENCHMARK_BUCKET, PUBLISH_BASELINE,
-    OASISLMF_BRANCH, OASISLMF_BRANCHES
+    OASISLMF_BRANCH, OASISLMF_BRANCHES, PATH_TO_OASISLMF_JSON, RUN_TEST_SUITE
 )
+
+import pytest
 
 
 def test_required_config_benchmark_requires_the_model_locations():
@@ -12,6 +15,37 @@ def test_required_config_benchmark_requires_the_model_locations():
     assert REPO_LOCATIONS in REQUIRED_CONFIG_BENCHMARK
     assert REPO_LOCATION not in REQUIRED_CONFIG_BENCHMARK
     assert REPO_LOCATION not in OPTIONAL_CONFIG_BENCHMARK
+
+
+def test_path_to_oasislmf_json_is_optional_not_required():
+    """A RUN_TEST_SUITE target never uses PATH_TO_OASISLMF_JSON, so it can't be required at
+    the schema level — validate_test_suite_config enforces it conditionally instead.
+    """
+    assert PATH_TO_OASISLMF_JSON in OPTIONAL_CONFIG_BENCHMARK
+    assert PATH_TO_OASISLMF_JSON not in REQUIRED_CONFIG_BENCHMARK
+
+
+def test_optional_config_benchmark_includes_run_test_suite():
+    assert RUN_TEST_SUITE in OPTIONAL_CONFIG_BENCHMARK
+
+
+def test_validate_test_suite_config_passes_with_path_to_oasislmf_json():
+    validate_test_suite_config({"PATH_TO_OASISLMF_JSON": "./oasislmf.json"})
+
+
+def test_validate_test_suite_config_raises_without_path_to_oasislmf_json_or_run_test_suite():
+    """An ordinary target with neither key has no model config to run at all."""
+    with pytest.raises(OasisAlpacaConfigError):
+        validate_test_suite_config({})
+
+
+def test_validate_test_suite_config_allows_missing_path_to_oasislmf_json_when_suite_mode():
+    validate_test_suite_config({"RUN_TEST_SUITE": True})
+
+
+def test_validate_test_suite_config_ignores_run_test_suite_set_false():
+    with pytest.raises(OasisAlpacaConfigError):
+        validate_test_suite_config({"RUN_TEST_SUITE": False})
 
 
 def test_optional_config_benchmark_includes_s3_baseline_keys():

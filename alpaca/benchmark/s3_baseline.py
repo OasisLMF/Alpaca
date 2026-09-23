@@ -71,9 +71,10 @@ def validate_s3_baseline_config(config):
         config: Validated benchmark configuration dictionary.
 
     Raises:
-        OasisAlpacaConfigError: If PUBLISH_BASELINE is set without BENCHMARK_BUCKET, or
-            without any OASISLMF_VERSIONS entry to publish under, since a baseline is stored
-            under a version and a branch target hasn't got one.
+        OasisAlpacaConfigError: If PUBLISH_BASELINE is set without BENCHMARK_BUCKET, without
+            any OASISLMF_VERSIONS entry to publish under (a branch target has no version to
+            publish under), or together with RUN_TEST_SUITE (a test suite has no single
+            output to store as a baseline).
     """
     if not config.get("PUBLISH_BASELINE", False):
         return
@@ -82,6 +83,10 @@ def validate_s3_baseline_config(config):
         raise OasisAlpacaConfigError("PUBLISH_BASELINE requires BENCHMARK_BUCKET to be set")
     if not config.get("OASISLMF_VERSIONS"):
         raise OasisAlpacaConfigError("PUBLISH_BASELINE requires OASISLMF_VERSIONS entries, as a branch has no version to publish under")
+    if config.get("RUN_TEST_SUITE", False):
+        raise OasisAlpacaConfigError(
+            "PUBLISH_BASELINE is not supported with RUN_TEST_SUITE, as a test suite has no single output to store as a baseline"
+        )
 
 
 def resolve_stored_versions(config):

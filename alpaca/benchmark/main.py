@@ -1,4 +1,4 @@
-from alpaca.benchmark.utils import REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK
+from alpaca.benchmark.utils import REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_test_suite_config
 from alpaca.benchmark.scripts import (
     LIVE_SOURCE, STORED_SOURCE, build_benchmark_plan, build_benchmark_targets, format_benchmark_plan
 )
@@ -25,10 +25,14 @@ def main(config_file):
     and all of them are peers: there's no designated baseline. Each one runs as an ordinary
     'alpaca model' run (reusing alpaca.model.main.main for its EC2 lifecycle) unless its
     version already has a stored baseline in BENCHMARK_BUCKET, in which case that is
-    downloaded instead of paying for the run again. The fastest successful target then
-    becomes the reference every other one is timed and diffed against, and a combined report
-    (per-target status/runtime, a timing comparison per other target, and the output
-    comparison or why it was skipped) is printed and saved alongside the result directories.
+    downloaded instead of paying for the run again — or, when RUN_TEST_SUITE is set, as a
+    test-suite run instead (alpaca.benchmark.testsuite_main.main, reusing 'alpaca pytest's
+    own EC2 lifecycle), in which case output comparison and baseline publishing are both
+    skipped, having nothing single to compare or publish. The fastest successful (ordinary)
+    target then becomes the reference every other one is timed and diffed against, and a
+    combined report (per-target status/runtime, a timing comparison per other target, and the
+    output comparison or why it was skipped) is printed and saved alongside the result
+    directories.
 
     Args:
         config_file: Path to the JSON configuration file for the benchmark run.
@@ -42,6 +46,7 @@ def main(config_file):
     config = load_config(config_file, REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK)
     relative_tolerance = resolve_relative_tolerance(config)
     validate_s3_baseline_config(config)
+    validate_test_suite_config(config)
 
     targets = build_benchmark_targets(config, resolve_stored_versions(config))
     plan = build_benchmark_plan(config, targets)
@@ -50,7 +55,12 @@ def main(config_file):
     results = _resolve_targets(config, targets, plan["execution_mode"])
     if config.get("PUBLISH_BASELINE", False):
         _publish_baselines(config, targets, results)
-    comparison_report, skip_reason = _compare_targets(targets, results, relative_tolerance)
+    if config.get("RUN_TEST_SUITE", False):
+        skip_reason = "RUN_TEST_SUITE targets have no single output to compare"
+        logger.warning(f"Skipping result comparison: {skip_reason}")
+        comparison_report = None
+    else:
+        comparison_report, skip_reason = _compare_targets(targets, results, relative_tolerance)
 
     print(build_report_text(results, comparison_report, skip_reason, colour=True))
     report_text = build_report_text(results, comparison_report, skip_reason)
