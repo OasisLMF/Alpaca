@@ -298,9 +298,9 @@ def test_main_takes_a_stored_version_from_the_bucket_instead_of_running_it(
     """
     results_dir = tmp_path / "results"
     _write_output_files(results_dir / "PiWind-2.5.6", {"summary.csv": "a,b\n1,2\n"})
-    mock_resolve_stored.return_value = {"2.5.4"}
+    mock_resolve_stored.return_value = {("PiWind", "2.5.4")}
 
-    def fake_download(bucket, version, local_directory, config):
+    def fake_download(bucket, model, version, local_directory, config):
         _write_output_files(local_directory, {"summary.csv": "a,b\n1,2\n"})
         return Path(local_directory)
 
@@ -316,7 +316,8 @@ def test_main_takes_a_stored_version_from_the_bucket_instead_of_running_it(
     assert mock_model_main.call_count == 1
     mock_download_baseline.assert_called_once()
     assert mock_download_baseline.call_args.args[0] == "s3://alpaca-benchmark"
-    assert mock_download_baseline.call_args.args[1] == "2.5.4"
+    assert mock_download_baseline.call_args.args[1] == "PiWind"
+    assert mock_download_baseline.call_args.args[2] == "2.5.4"
     mock_upload_baseline.assert_not_called()
     assert output["comparison"]["status"] == "pass"
     assert [r["version"] for r in output["results"]] == ["2.5.6", "2.5.4 (S3 baseline)"]
@@ -337,9 +338,9 @@ def test_main_times_a_stored_target_from_its_published_metrics(
     result_file.parent.mkdir(parents=True)
     result_file.write_text("COMPLETED: oasislmf.manager.interface in 210.50s\n")
     _write_output_files(results_dir / "PiWind-2.5.6", {"summary.csv": "a,b\n1,2\n"})
-    mock_resolve_stored.return_value = {"2.5.4"}
+    mock_resolve_stored.return_value = {("PiWind", "2.5.4")}
 
-    def fake_download(bucket, version, local_directory, config):
+    def fake_download(bucket, model, version, local_directory, config):
         _write_output_files(local_directory, {"summary.csv": "a,b\n1,2\n"})
         Path(local_directory, "result.txt").write_text("COMPLETED: oasislmf.manager.interface in 165.75s\n")
         return Path(local_directory)
@@ -372,9 +373,9 @@ def test_main_compares_stored_targets_that_have_no_runtimes(
     still worth diffing, so the first one stands in as the reference.
     """
     results_dir = tmp_path / "results"
-    mock_resolve_stored.return_value = {"2.5.6", "2.5.4"}
+    mock_resolve_stored.return_value = {("PiWind", "2.5.6"), ("PiWind", "2.5.4")}
 
-    def fake_download(bucket, version, local_directory, config):
+    def fake_download(bucket, model, version, local_directory, config):
         _write_output_files(local_directory, {"summary.csv": "a,b\n1,2\n"})
         return Path(local_directory)
 
@@ -402,8 +403,8 @@ def test_main_runs_nothing_when_the_only_version_is_already_stored(
     """A single version that's already in the bucket is a no-op: it's taken from there, so
     there's no run and nothing to compare it against.
     """
-    mock_resolve_stored.return_value = {"2.5.6"}
-    mock_download_baseline.side_effect = lambda bucket, version, local_directory, config: Path(local_directory)
+    mock_resolve_stored.return_value = {("PiWind", "2.5.6")}
+    mock_download_baseline.side_effect = lambda bucket, model, version, local_directory, config: Path(local_directory)
     config_path = _write_config(tmp_path, {
         "OASISLMF_VERSIONS": ["2.5.6"], "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
     })
@@ -425,9 +426,9 @@ def test_main_runs_nothing_when_every_version_is_already_stored(
     executor up on having nothing to run.
     """
     results_dir = tmp_path / "results"
-    mock_resolve_stored.return_value = {"2.5.6", "2.5.4"}
+    mock_resolve_stored.return_value = {("PiWind", "2.5.6"), ("PiWind", "2.5.4")}
 
-    def fake_download(bucket, version, local_directory, config):
+    def fake_download(bucket, model, version, local_directory, config):
         _write_output_files(local_directory, {"summary.csv": "a,b\n1,2\n"})
         return Path(local_directory)
 
@@ -456,9 +457,9 @@ def test_main_reports_a_stored_target_with_no_recorded_runtime(
     """
     results_dir = tmp_path / "results"
     _write_output_files(results_dir / "PiWind-2.5.6", {"summary.csv": "a,b\n1,2\n"})
-    mock_resolve_stored.return_value = {"2.5.4"}
+    mock_resolve_stored.return_value = {("PiWind", "2.5.4")}
 
-    def fake_download(bucket, version, local_directory, config):
+    def fake_download(bucket, model, version, local_directory, config):
         _write_output_files(local_directory, {"summary.csv": "a,b\n1,2\n"})
         return Path(local_directory)
 
@@ -487,8 +488,8 @@ def test_main_does_not_republish_a_stored_target(
     """Uploading a baseline straight back to where it was just downloaded from would be
     pointless, and would overwrite it with itself.
     """
-    mock_resolve_stored.return_value = {"2.5.4"}
-    mock_download_baseline.side_effect = lambda bucket, version, local_directory, config: Path(local_directory)
+    mock_resolve_stored.return_value = {("PiWind", "2.5.4")}
+    mock_download_baseline.side_effect = lambda bucket, model, version, local_directory, config: Path(local_directory)
     config_path = _write_config(tmp_path, {
         "OASISLMF_VERSIONS": ["2.5.6", "2.5.4"],
         "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
@@ -497,7 +498,7 @@ def test_main_does_not_republish_a_stored_target(
 
     main(config_path)
 
-    assert [call.args[1] for call in mock_upload_baseline.call_args_list] == ["2.5.6"]
+    assert [(call.args[1], call.args[2]) for call in mock_upload_baseline.call_args_list] == [("PiWind", "2.5.6")]
 
 
 @mock.patch("alpaca.benchmark.main.download_baseline")
@@ -507,7 +508,7 @@ def test_main_marks_a_stored_target_failed_when_the_download_fails(
     mock_model_main, mock_resolve_stored, mock_download_baseline, tmp_path
 ):
     """A broken download shouldn't throw away the targets that did run."""
-    mock_resolve_stored.return_value = {"2.5.4"}
+    mock_resolve_stored.return_value = {("PiWind", "2.5.4")}
     mock_download_baseline.side_effect = RuntimeError("no such bucket")
     config_path = _write_config(tmp_path, {
         "OASISLMF_VERSIONS": ["2.5.6", "2.5.4"], "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
@@ -532,7 +533,9 @@ def test_main_publishes_every_version_target_when_configured(mock_model_main, mo
 
     main(config_path)
 
-    assert [call.args[1] for call in mock_upload_baseline.call_args_list] == ["2.5.6", "2.5.4"]
+    assert [(call.args[1], call.args[2]) for call in mock_upload_baseline.call_args_list] == [
+        ("PiWind", "2.5.6"), ("PiWind", "2.5.4"),
+    ]
     assert mock_upload_baseline.call_args_list[0].args[0] == "s3://alpaca-benchmark"
 
 
@@ -549,7 +552,7 @@ def test_main_does_not_publish_a_branch_target(mock_model_main, mock_upload_base
 
     main(config_path)
 
-    assert [call.args[1] for call in mock_upload_baseline.call_args_list] == ["2.5.6"]
+    assert [(call.args[1], call.args[2]) for call in mock_upload_baseline.call_args_list] == [("PiWind", "2.5.6")]
 
 
 @mock.patch("alpaca.benchmark.main.upload_baseline")
@@ -564,7 +567,7 @@ def test_main_does_not_publish_a_failed_target(mock_model_main, mock_upload_base
 
     main(config_path)
 
-    assert [call.args[1] for call in mock_upload_baseline.call_args_list] == ["2.5.6"]
+    assert [(call.args[1], call.args[2]) for call in mock_upload_baseline.call_args_list] == [("PiWind", "2.5.6")]
 
 
 def test_main_raises_when_publish_baseline_missing_bucket(tmp_path):

@@ -1,5 +1,5 @@
 from alpaca.benchmark.comparison import find_output_dir
-from alpaca.benchmark.scripts import benchmark_locations
+from alpaca.benchmark.scripts import benchmark_locations, model_name_from_location
 from alpaca.benchmark.timing import find_result_file
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from botocore.exceptions import ClientError
@@ -27,19 +27,21 @@ def _parse_bucket_uri(bucket_uri):
     return parsed.netloc, parsed.path.strip("/")
 
 
-def _version_prefix(bucket_uri, version):
-    """Build the (bucket, key_prefix) a version's baseline is stored under.
+def _baseline_prefix(bucket_uri, model, version):
+    """Build the (bucket, key_prefix) a model/version's baseline is stored under.
 
     Args:
         bucket_uri: S3 bucket URI, see _parse_bucket_uri.
+        model: Short model name the baseline was run against, see
+            alpaca.benchmark.scripts.model_name_from_location.
         version: OasisLMF version the baseline is stored under.
 
     Returns:
-        tuple[str, str]: (bucket, prefix), with any bucket-level prefix and the version
-            joined together.
+        tuple[str, str]: (bucket, prefix), with any bucket-level prefix, the model and the
+            version joined together as '<prefix>/<model>/<version>'.
     """
     bucket, prefix = _parse_bucket_uri(bucket_uri)
-    return bucket, "/".join(part for part in (prefix, version) if part)
+    return bucket, "/".join(part for part in (prefix, model, version) if part)
 
 
 def _s3_client(config):
@@ -83,73 +85,74 @@ def validate_s3_baseline_config(config):
 
 
 def resolve_stored_versions(config):
-    """Find which of a benchmark's versions already have a stored baseline to reuse.
+    """Find which (model, version) pairs already have a stored baseline to reuse.
 
-    A version whose baseline is already in BENCHMARK_BUCKET doesn't need an EC2 run: the
-    stored output and performance metrics stand in for it. Baselines are keyed by version
-    alone, so this only applies when the benchmark runs a single model location - with more
-    than one, the same stored output would be reused for every location and the comparison
-    would be meaningless. PUBLISH_BASELINE also opts out, since republishing a version means
-    running it rather than reusing what's already there.
+    A model/version pair whose baseline is already in BENCHMARK_BUCKET doesn't need an EC2
+    run: the stored output and performance metrics stand in for it. Baselines are keyed by
+    model and version together, so this is checked per REPO_LOCATIONS entry rather than being
+    limited to a single-model benchmark. PUBLISH_BASELINE opts out entirely, since
+    republishing a version means running it rather than reusing what's already there.
 
     Args:
         config: Validated benchmark configuration dictionary.
 
     Returns:
-        set[str]: The OASISLMF_VERSIONS entries with a stored baseline output in
+        set[tuple[str, str]]: (model, version) pairs with a stored baseline output in
             BENCHMARK_BUCKET, empty when there's nothing to reuse.
     """
     bucket = config.get("BENCHMARK_BUCKET")
     versions = config.get("OASISLMF_VERSIONS") or []
-    if not bucket or not versions:
+    models = [model_name_from_location(location) for location in benchmark_locations(config)]
+    if not bucket or not versions or not models:
         return set()
 
     if config.get("PUBLISH_BASELINE", False):
         logger.info("PUBLISH_BASELINE is set, so every version target runs rather than reusing a stored baseline")
         return set()
-    if len(benchmark_locations(config)) > 1:
-        logger.warning(
-            "Stored baselines are keyed by OasisLMF version only, so they can't be told apart per model; "
-            "running every version live because REPO_LOCATIONS holds more than one location"
-        )
-        return set()
 
     client = _s3_client(config)
-    stored = {version for version in versions if _baseline_exists(client, bucket, version)}
-    for version in stored:
-        logger.info(f"Reusing the stored {version} baseline from {bucket} instead of running it")
+    stored = {
+        (model, version)
+        for model in models
+        for version in versions
+        if _baseline_exists(client, bucket, model, version)
+    }
+    for model, version in stored:
+        logger.info(f"Reusing the stored {model} {version} baseline from {bucket} instead of running it")
     return stored
 
 
-def _baseline_exists(client, bucket_uri, version):
-    """Check whether a version has stored baseline output in a bucket.
+def _baseline_exists(client, bucket_uri, model, version):
+    """Check whether a model/version pair has stored baseline output in a bucket.
 
     Args:
         client: boto3 S3 client, see _s3_client.
         bucket_uri: S3 bucket URI the baselines are stored under.
+        model: Short model name to look for, see model_name_from_location.
         version: OasisLMF version to look for.
 
     Returns:
-        bool: True if any object exists under that version's 'output/' prefix.
+        bool: True if any object exists under that model/version's 'output/' prefix.
 
     Raises:
         OasisAlpacaConfigError: If the bucket can't be read, e.g. it doesn't exist or the
             credentials can't list it. This runs before any EC2 spend, so it's worth naming
             the bucket rather than letting a botocore error through.
     """
-    bucket, version_prefix = _version_prefix(bucket_uri, version)
+    bucket, prefix = _baseline_prefix(bucket_uri, model, version)
     try:
-        listing = client.list_objects_v2(Bucket=bucket, Prefix=f"{version_prefix}/output/", MaxKeys=1)
+        listing = client.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/output/", MaxKeys=1)
     except ClientError as error:
         raise OasisAlpacaConfigError(f"Could not read stored baselines from {bucket_uri}: {error}")
     return bool(listing.get("KeyCount"))
 
 
-def upload_baseline(bucket_uri, version, result_directory, config):
-    """Publish a benchmark target's output and performance data as a version's baseline.
+def upload_baseline(bucket_uri, model, version, result_directory, config):
+    """Publish a benchmark target's output and performance data as a model/version's baseline.
 
     Args:
         bucket_uri: S3 bucket URI (e.g. 's3://alpaca-benchmark') to publish under.
+        model: Short model name this run's results represent, see model_name_from_location.
         version: OasisLMF version this run's results represent.
         result_directory: Local directory the target's results were downloaded to (a
             RESULT_DIRECTORY from build_benchmark_targets).
@@ -159,27 +162,27 @@ def upload_baseline(bucket_uri, version, result_directory, config):
         OasisAlpacaError: If result_directory has no 'output' directory under it (see
             find_output_dir).
     """
-    bucket, version_prefix = _version_prefix(bucket_uri, version)
+    bucket, prefix = _baseline_prefix(bucket_uri, model, version)
     client = _s3_client(config)
 
-    existing = client.list_objects_v2(Bucket=bucket, Prefix=f"{version_prefix}/", MaxKeys=1)
+    existing = client.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/", MaxKeys=1)
     if existing.get("KeyCount"):
-        logger.warning(f"Overwriting existing baseline at s3://{bucket}/{version_prefix}")
+        logger.warning(f"Overwriting existing baseline at s3://{bucket}/{prefix}")
 
     output_dir = find_output_dir(result_directory)
     for file_path in sorted(output_dir.iterdir()):
         if file_path.is_file():
-            client.upload_file(str(file_path), bucket, f"{version_prefix}/output/{file_path.name}")
-    logger.info(f"Published {version} baseline output to s3://{bucket}/{version_prefix}/output")
+            client.upload_file(str(file_path), bucket, f"{prefix}/output/{file_path.name}")
+    logger.info(f"Published {model} {version} baseline output to s3://{bucket}/{prefix}/output")
 
     result_file = find_result_file(result_directory)
     if result_file is not None:
-        client.upload_file(str(result_file), bucket, f"{version_prefix}/performance/{PERFORMANCE_RESULT_FILENAME}")
-        logger.info(f"Published {version} performance metrics to s3://{bucket}/{version_prefix}/performance")
+        client.upload_file(str(result_file), bucket, f"{prefix}/performance/{PERFORMANCE_RESULT_FILENAME}")
+        logger.info(f"Published {model} {version} performance metrics to s3://{bucket}/{prefix}/performance")
 
 
-def download_baseline(bucket_uri, version, local_directory, config):
-    """Download a version's stored baseline output and performance data locally.
+def download_baseline(bucket_uri, model, version, local_directory, config):
+    """Download a model/version's stored baseline output and performance data locally.
 
     Downloads into a shape identical to a normal run's downloaded result directory
     (local_directory/output/*, local_directory/result.txt), so find_output_dir,
@@ -187,6 +190,7 @@ def download_baseline(bucket_uri, version, local_directory, config):
 
     Args:
         bucket_uri: S3 bucket URI the baseline is stored under.
+        model: Short model name to fetch the baseline for, see model_name_from_location.
         version: OasisLMF version to fetch the baseline for.
         local_directory: Local directory to download into.
         config: Validated benchmark configuration dictionary, for AWS session settings.
@@ -195,9 +199,9 @@ def download_baseline(bucket_uri, version, local_directory, config):
         Path: local_directory, for convenience.
 
     Raises:
-        OasisAlpacaError: If no stored output exists for that version at that bucket.
+        OasisAlpacaError: If no stored output exists for that model/version at that bucket.
     """
-    bucket, version_prefix = _version_prefix(bucket_uri, version)
+    bucket, prefix = _baseline_prefix(bucket_uri, model, version)
     client = _s3_client(config)
 
     local_directory = Path(local_directory)
@@ -206,7 +210,7 @@ def download_baseline(bucket_uri, version, local_directory, config):
 
     paginator = client.get_paginator("list_objects_v2")
     found_output = False
-    for page in paginator.paginate(Bucket=bucket, Prefix=f"{version_prefix}/output/"):
+    for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/output/"):
         for obj in page.get("Contents", []):
             filename = obj["Key"].rsplit("/", 1)[-1]
             if not filename:
@@ -215,14 +219,14 @@ def download_baseline(bucket_uri, version, local_directory, config):
             client.download_file(bucket, obj["Key"], str(output_dir / filename))
 
     if not found_output:
-        raise OasisAlpacaError(f"No stored baseline found at s3://{bucket}/{version_prefix}/output/")
+        raise OasisAlpacaError(f"No stored baseline found at s3://{bucket}/{prefix}/output/")
 
     try:
         client.download_file(
-            bucket, f"{version_prefix}/performance/{PERFORMANCE_RESULT_FILENAME}",
+            bucket, f"{prefix}/performance/{PERFORMANCE_RESULT_FILENAME}",
             str(local_directory / PERFORMANCE_RESULT_FILENAME),
         )
     except ClientError:
-        logger.warning(f"No stored performance metrics found at s3://{bucket}/{version_prefix}/performance/")
+        logger.warning(f"No stored performance metrics found at s3://{bucket}/{prefix}/performance/")
 
     return local_directory

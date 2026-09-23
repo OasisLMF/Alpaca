@@ -304,8 +304,8 @@ def test_build_benchmark_targets_disambiguates_three_way_result_directory_clashe
 
 
 def test_build_benchmark_targets_marks_stored_versions():
-    """A version already in the bucket is taken from there rather than run again."""
-    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={"2.4.9"})
+    """A model/version already in the bucket is taken from there rather than run again."""
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={("PiWind", "2.4.9")})
 
     assert [target["source"] for target in targets] == [LIVE_SOURCE, STORED_SOURCE]
 
@@ -313,21 +313,31 @@ def test_build_benchmark_targets_marks_stored_versions():
 def test_build_benchmark_targets_never_marks_a_branch_as_stored():
     """Baselines are stored per version, so a branch target always runs."""
     config = {**BASE_BENCHMARK_CONFIG, "OASISLMF_VERSIONS": [], "OASISLMF_BRANCHES": ["stable/2.4.x"]}
-    targets = build_benchmark_targets(config, stored_versions={"stable/2.4.x"})
+    targets = build_benchmark_targets(config, stored_versions={("PiWind", "stable/2.4.x")})
 
     assert targets[0]["source"] == LIVE_SOURCE
 
 
 def test_build_benchmark_targets_ignores_stored_versions_it_is_not_running():
-    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={"9.9.9"})
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={("PiWind", "9.9.9")})
 
     assert [target["source"] for target in targets] == [LIVE_SOURCE, LIVE_SOURCE]
 
 
-def test_build_benchmark_targets_marks_a_stored_version_at_every_location():
-    """A location axis doesn't change which versions are already stored."""
+def test_build_benchmark_targets_marks_a_stored_version_only_for_its_own_model():
+    """Baselines are keyed by model and version together, so a stored pair for one model
+    doesn't mark the same version as stored for another model at a different location.
+    """
     config = {**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": [PIWIND, LEAGUE]}
-    targets = build_benchmark_targets(config, stored_versions={"2.4.9"})
+    targets = build_benchmark_targets(config, stored_versions={("PiWind", "2.4.9")})
+
+    assert [target["source"] for target in targets] == [LIVE_SOURCE, STORED_SOURCE, LIVE_SOURCE, LIVE_SOURCE]
+
+
+def test_build_benchmark_targets_marks_a_stored_version_at_every_location_when_both_are_stored():
+    """Each model/version pair is looked up on its own, so both locations can be stored."""
+    config = {**BASE_BENCHMARK_CONFIG, "REPO_LOCATIONS": [PIWIND, LEAGUE]}
+    targets = build_benchmark_targets(config, stored_versions={("PiWind", "2.4.9"), ("League", "2.4.9")})
 
     assert [target["source"] for target in targets] == [LIVE_SOURCE, STORED_SOURCE, LIVE_SOURCE, STORED_SOURCE]
 
@@ -382,7 +392,7 @@ def test_build_benchmark_plan_labels_branch_targets():
 
 def test_build_benchmark_plan_labels_stored_targets_distinctly():
     """A target read from the bucket isn't a live run, and shouldn't read like one."""
-    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={"2.4.9"})
+    targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={("PiWind", "2.4.9")})
     plan = build_benchmark_plan(BASE_BENCHMARK_CONFIG, targets)
 
     assert plan["targets"] == ["PiWind: OasisLMF 2.3.3", "PiWind: OasisLMF 2.4.9 (S3 baseline)"]
