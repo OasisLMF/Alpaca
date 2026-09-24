@@ -28,20 +28,24 @@ def main(config_file):
     downloaded instead of paying for the run again — or, when RUN_TEST_SUITE is set, as a
     test-suite run instead (alpaca.benchmark.testsuite_main.main, reusing 'alpaca pytest's
     own EC2 lifecycle), in which case output comparison and baseline publishing are both
-    skipped, having nothing single to compare or publish. The fastest successful (ordinary)
-    target then becomes the reference every other one is timed and diffed against, and a
-    combined report (per-target status/runtime, a timing comparison per other target, and the
-    output comparison or why it was skipped) is printed and saved alongside the result
-    directories.
+    skipped, having nothing single to compare or publish.
+
+    Comparison (both timing and output) is scoped per model (i.e. per REPO_LOCATIONS entry):
+    within a model's own targets, the fastest becomes the reference the rest are timed and
+    diffed against, but two different models are never compared against each other, since
+    they're expected to produce different output and take different amounts of time - that's
+    not a regression, just a different thing. A combined report (per-target status/runtime,
+    then one section per model with its own timing comparison and output diff, or why either
+    was skipped) is printed and saved alongside the result directories.
 
     Args:
         config_file: Path to the JSON configuration file for the benchmark run.
 
     Returns:
         dict: 'results' (one dict per target, in target order, see
-            alpaca.benchmark.executor._run_target), 'comparison' (the report from
-            build_comparison_reports, or None if comparison was skipped) and 'report_path'
-            (where the combined report was written).
+            alpaca.benchmark.executor._run_target), 'comparison' (list[dict], one
+            {'model', 'report', 'skip_reason'} entry per distinct model - see
+            _compare_targets) and 'report_path' (where the combined report was written).
     """
     config = load_config(config_file, REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK)
     relative_tolerance = resolve_relative_tolerance(config)
@@ -58,17 +62,20 @@ def main(config_file):
     if config.get("RUN_TEST_SUITE", False):
         skip_reason = "RUN_TEST_SUITE targets have no single output to compare"
         logger.warning(f"Skipping result comparison: {skip_reason}")
-        comparison_report = None
+        comparison_groups = [
+            {"model": model, "report": None, "skip_reason": skip_reason}
+            for model, _ in _group_by_model(targets, results)
+        ]
     else:
-        comparison_report, skip_reason = _compare_targets(targets, results, relative_tolerance)
+        comparison_groups = _compare_targets(targets, results, relative_tolerance)
 
-    print(build_report_text(results, comparison_report, skip_reason, colour=True))
-    report_text = build_report_text(results, comparison_report, skip_reason)
+    print(build_report_text(results, comparison_groups, colour=True))
+    report_text = build_report_text(results, comparison_groups)
     result_directory = Path(targets[0]["run_config"]["RESULT_DIRECTORY"]).parent
     report_path = write_report(report_text, result_directory)
     logger.info(f"Benchmark report written to {report_path}")
 
-    return {"results": results, "comparison": comparison_report, "report_path": report_path}
+    return {"results": results, "comparison": comparison_groups, "report_path": report_path}
 
 
 def _resolve_targets(config, targets, execution_mode):
@@ -133,8 +140,35 @@ def _download_stored_target(config, target):
     }
 
 
+def _group_by_model(targets, results):
+    """Group (target, result) pairs by target['model'], preserving first-seen order.
+
+    Two different models are never worth comparing against each other - they're expected to
+    produce different output and take different amounts of time, so grouping first is what
+    keeps _compare_targets (and the report's per-model sections) from treating that as a
+    difference worth flagging.
+
+    Args:
+        targets: List of targets as returned by build_benchmark_targets.
+        results: The matching results, in the same order (see _resolve_targets).
+
+    Returns:
+        list[tuple[str, list[tuple[dict, dict]]]]: (model, pairs) per distinct model, in the
+            order each model's first target appears in targets.
+    """
+    order = []
+    groups = {}
+    for target, result in zip(targets, results):
+        model = target["model"]
+        if model not in groups:
+            groups[model] = []
+            order.append(model)
+        groups[model].append((target, result))
+    return [(model, groups[model]) for model in order]
+
+
 def _compare_targets(targets, results, relative_tolerance):
-    """Diff every successful target's output against the fastest one's.
+    """Diff each model's targets' output against the fastest one of that same model.
 
     Args:
         targets: List of targets as returned by build_benchmark_targets.
@@ -142,24 +176,43 @@ def _compare_targets(targets, results, relative_tolerance):
         relative_tolerance: Relative tolerance for numeric CSV cells.
 
     Returns:
-        tuple[dict or None, str]: (comparison_report, skip_reason), with the compared targets
-            ordered quickest first to match the report's timing table. Outputs are worth
-            diffing even when nothing can be ranked (every target a stored baseline with no
-            recorded runtime, say), so the first target stands in as the reference there. The
-            report is None when fewer than two targets succeeded, since there's then nothing
-            to compare against, or when a target's output couldn't be read; skip_reason is
-            only used by the caller in that case. A run's timings are still worth reporting
-            when its outputs can't be diffed, so a missing output directory is reported
-            rather than raised.
+        list[dict]: One {'model', 'report', 'skip_reason'} entry per distinct model (see
+            _group_by_model for the order), from _compare_group.
     """
-    successful = [(target, result) for target, result in zip(targets, results) if result["status"] == "success"]
+    return [
+        {"model": model, **_compare_group(pairs, relative_tolerance)}
+        for model, pairs in _group_by_model(targets, results)
+    ]
+
+
+def _compare_group(pairs, relative_tolerance):
+    """Diff every successful target's output, within one model, against the fastest one's.
+
+    Args:
+        pairs: List of (target, result) for a single model's targets, in build_benchmark_targets
+            order (see _group_by_model).
+        relative_tolerance: Relative tolerance for numeric CSV cells.
+
+    Returns:
+        dict: {'report': dict or None, 'skip_reason': str}. 'report' is the dict from
+            build_comparison_reports, with the compared targets ordered quickest first to
+            match the report's timing table. Outputs are worth diffing even when nothing can
+            be ranked (every target a stored baseline with no recorded runtime, say), so the
+            first target stands in as the reference there. 'report' is None when fewer than
+            two of this model's targets succeeded, since there's then nothing to compare
+            against, or when a target's output couldn't be read; 'skip_reason' explains why
+            in that case, and is '' otherwise. A run's timings are still worth reporting when
+            its outputs can't be diffed, so a missing output directory is reported rather
+            than raised.
+    """
+    successful = [(target, result) for target, result in pairs if result["status"] == "success"]
     if len(successful) < 2:
-        if len(targets) < 2:
-            skip_reason = "only one target was configured (add OASISLMF_VERSIONS, OASISLMF_BRANCHES or REPO_LOCATIONS entries)"
+        if len(pairs) < 2:
+            skip_reason = "only one target for this model (add OASISLMF_VERSIONS or OASISLMF_BRANCHES entries)"
         else:
-            skip_reason = "fewer than two targets succeeded"
+            skip_reason = "fewer than two of this model's targets succeeded"
         logger.warning(f"Skipping result comparison: {skip_reason}")
-        return None, skip_reason
+        return {"report": None, "skip_reason": skip_reason}
 
     reference_result = fastest_result([result for _, result in successful])
     if reference_result is None:
@@ -177,8 +230,8 @@ def _compare_targets(targets, results, relative_tolerance):
         )
     except OasisAlpacaError as error:
         logger.warning(f"Skipping result comparison: {error}")
-        return None, str(error)
-    return report, ""
+        return {"report": None, "skip_reason": str(error)}
+    return {"report": report, "skip_reason": ""}
 
 
 def _publish_baselines(config, targets, results):

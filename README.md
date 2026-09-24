@@ -233,10 +233,14 @@ timings out of `result.txt`. The `oasislmf.manager.interface` step is used as th
 runtime, with the wall-clock time (which includes EC2 startup, upload and download) kept
 alongside it and used as a fallback if the run reported no timings.
 
-The fastest successful target becomes the reference every other one is compared against:
+Comparison — both timings and output — is scoped per model (i.e. per `REPO_LOCATIONS`
+entry): within a model's own targets, the fastest successful one becomes the reference the
+rest are compared against, but two different models are never compared against each other,
+since they're expected to produce different output and take a different amount of time —
+that's not a regression, just a different thing.
 
-* **Timings** are reported per OasisLMF step, one column per target, quickest first, each
-  cell showing how far behind the quickest it was.
+* **Timings** are reported per OasisLMF step, one column per target, quickest first within
+  its model, each cell showing how far behind the quickest it was.
 * **Outputs** are diffed file by file in each run's `output` directory. Files are
   checksummed first, and only on a mismatch are CSVs parsed and compared cell by cell within
   `COMPARISON_TOLERANCE` — OasisLMF's Monte Carlo sampling means two runs rarely produce
@@ -244,11 +248,14 @@ The fastest successful target becomes the reference every other one is compared 
   reported as different.
 
 The combined report is printed and written to `benchmark_report.txt` next to the target
-result directories. Comparison is skipped (with the reason stated in the report) if fewer
-than two targets succeeded or a run's `output` directory can't be found. A target that fails
-is reported as failed; the others still run and report. Because the timings and comparison
-are read from local files, a benchmark needs a local `RESULT_DIRECTORY` and rejects an
-`s3://` one before starting anything.
+result directories: a run summary line per target, then one section per model with its own
+timing table and output comparison. A benchmark spanning only one model (still the most
+common case) reads exactly as before — no redundant model heading, single flat report.
+Comparison for a given model is skipped (with the reason stated in the report) if fewer than
+two of its targets succeeded or a run's `output` directory can't be found — this never holds
+back another model's comparison. A target that fails is reported as failed; the others still
+run and report. Because the timings and comparison are read from local files, a benchmark
+needs a local `RESULT_DIRECTORY` and rejects an `s3://` one before starting anything.
 
 ### Stored S3 baselines
 

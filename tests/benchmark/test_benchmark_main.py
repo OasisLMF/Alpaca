@@ -39,6 +39,13 @@ def _write_output_files(directory, files):
         (output_dir / name).write_text(content)
 
 
+def _group_for(output, model):
+    """Pull one model's comparison group out of output['comparison'] (a list, one entry
+    per distinct model - see alpaca.benchmark.main._compare_targets).
+    """
+    return next(group for group in output["comparison"] if group["model"] == model)
+
+
 @mock.patch("alpaca.benchmark.main.build_comparison_reports")
 @mock.patch("alpaca.benchmark.executor.model_main")
 def test_main_returns_structured_results_for_every_target(mock_model_main, mock_build_comparison, tmp_path):
@@ -102,6 +109,51 @@ def test_main_runs_every_location_at_every_version(mock_model_main, mock_build_c
     ]
 
 
+@mock.patch("alpaca.benchmark.main.build_comparison_reports")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_never_compares_one_model_against_another(mock_model_main, mock_build_comparison, tmp_path):
+    """The core bug this fixes: two REPO_LOCATIONS entries must each get their own
+    comparison group, never diffed against each other.
+    """
+    mock_build_comparison.side_effect = lambda reference, targets, tolerance: {
+        "reference": reference[0], "status": "pass",
+        "comparisons": [{"target": name, "status": "pass", "different_files": []} for name, _ in targets],
+    }
+    config_path = _write_config(tmp_path, {"REPO_LOCATIONS": [PIWIND, "https://github.com/OasisLMF/OasisLeague"]})
+
+    output = main(config_path)
+
+    assert len(output["comparison"]) == 2
+    assert {group["model"] for group in output["comparison"]} == {"PiWind", "League"}
+    piwind_report = _group_for(output, "PiWind")["report"]
+    league_report = _group_for(output, "League")["report"]
+    assert piwind_report["reference"].startswith("PiWind")
+    assert all(comparison["target"].startswith("PiWind") for comparison in piwind_report["comparisons"])
+    assert league_report["reference"].startswith("League")
+    assert all(comparison["target"].startswith("League") for comparison in league_report["comparisons"])
+
+
+@mock.patch("alpaca.benchmark.main.build_comparison_reports")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_compares_one_model_while_skipping_another_with_only_one_target(mock_model_main, mock_build_comparison, tmp_path):
+    """One model having enough targets to compare doesn't require every model to."""
+    mock_build_comparison.return_value = {"reference": "PiWind 2.3.3", "status": "pass", "comparisons": []}
+    config_path = _write_config(tmp_path, {"REPO_LOCATIONS": [PIWIND, "https://github.com/OasisLMF/OasisLeague"]})
+    config = json.loads(config_path.read_text())
+    config_path.write_text(json.dumps(config))
+    # PiWind gets both versions (2 targets), League only needs one live call mocked out -
+    # simulate by having model_main raise for League's second target so only one succeeds.
+    mock_model_main.side_effect = [None, None, None, RuntimeError("boom")]
+
+    output = main(config_path)
+
+    piwind_group = _group_for(output, "PiWind")
+    league_group = _group_for(output, "League")
+    assert piwind_group["report"] is not None
+    assert league_group["report"] is None
+    assert "fewer than two of this model's targets succeeded" in league_group["skip_reason"]
+
+
 @mock.patch("alpaca.benchmark.executor.model_main")
 def test_main_marks_target_failed_when_model_main_raises(mock_model_main, tmp_path):
     """Test that a target whose model_main call raises is reported as failed, not propagated."""
@@ -123,7 +175,7 @@ def test_main_skips_comparison_when_a_target_failed(mock_model_main, tmp_path, c
     with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.main"):
         output = main(config_path)
 
-    assert output["comparison"] is None
+    assert _group_for(output, "PiWind")["report"] is None
     assert "Skipping result comparison" in caplog.text
 
 
@@ -137,7 +189,7 @@ def test_main_reports_pass_when_outputs_identical(mock_model_main, tmp_path, cap
 
     output = main(config_path)
 
-    assert output["comparison"]["status"] == "pass"
+    assert _group_for(output, "PiWind")["report"]["status"] == "pass"
     assert "PASS:\nOutputs identical" in capsys.readouterr().out
 
 
@@ -151,8 +203,9 @@ def test_main_reports_fail_when_outputs_differ(mock_model_main, tmp_path, capsys
 
     output = main(config_path)
 
-    assert output["comparison"]["status"] == "fail"
-    assert output["comparison"]["comparisons"][0]["different_files"] == ["summary.csv"]
+    report = _group_for(output, "PiWind")["report"]
+    assert report["status"] == "fail"
+    assert report["comparisons"][0]["different_files"] == ["summary.csv"]
     assert "FAIL:\nFiles different:\n- summary.csv" in capsys.readouterr().out
 
 
@@ -175,8 +228,9 @@ def test_main_compares_every_other_target_against_the_fastest(mock_model_main, t
 
     output = main(config_path)
 
-    assert output["comparison"]["reference"] == "PiWind 2.4.9"
-    assert output["comparison"]["comparisons"] == [
+    report = _group_for(output, "PiWind")["report"]
+    assert report["reference"] == "PiWind 2.4.9"
+    assert report["comparisons"] == [
         {"target": "PiWind 2.3.3", "status": "pass", "different_files": []},
         {"target": "PiWind 2.5.6", "status": "fail", "different_files": ["summary.csv"]},
     ]
@@ -193,7 +247,7 @@ def test_main_still_reports_when_a_targets_output_cannot_be_read(mock_model_main
 
     output = main(config_path)
 
-    assert output["comparison"] is None
+    assert _group_for(output, "PiWind")["report"] is None
     assert "Output comparison skipped: No 'output' directory found" in capsys.readouterr().out
     assert "Benchmark Report" in output["report_path"].read_text()
 
@@ -210,7 +264,7 @@ def test_main_treats_tiny_numeric_differences_as_a_pass(mock_model_main, tmp_pat
 
     output = main(config_path)
 
-    assert output["comparison"]["status"] == "pass"
+    assert _group_for(output, "PiWind")["report"]["status"] == "pass"
     assert "PASS:\nOutputs identical" in capsys.readouterr().out
 
 
@@ -224,7 +278,7 @@ def test_main_respects_configured_comparison_tolerance(mock_model_main, tmp_path
 
     output = main(config_path)
 
-    assert output["comparison"]["status"] == "pass"
+    assert _group_for(output, "PiWind")["report"]["status"] == "pass"
 
 
 def test_main_raises_on_invalid_comparison_tolerance(tmp_path):
@@ -246,8 +300,8 @@ def test_main_runs_a_single_target_when_only_one_version_is_configured(mock_mode
 
     assert mock_model_main.call_count == 1
     assert [r["version"] for r in output["results"]] == ["2.5.6"]
-    assert output["comparison"] is None
-    assert "only one target was configured" in capsys.readouterr().out
+    assert _group_for(output, "PiWind")["report"] is None
+    assert "only one target for this model" in capsys.readouterr().out
 
 
 @mock.patch("alpaca.benchmark.executor.model_main")
@@ -319,7 +373,7 @@ def test_main_takes_a_stored_version_from_the_bucket_instead_of_running_it(
     assert mock_download_baseline.call_args.args[1] == "PiWind"
     assert mock_download_baseline.call_args.args[2] == "2.5.4"
     mock_upload_baseline.assert_not_called()
-    assert output["comparison"]["status"] == "pass"
+    assert _group_for(output, "PiWind")["report"]["status"] == "pass"
     assert [r["version"] for r in output["results"]] == ["2.5.6", "2.5.4 (S3 baseline)"]
     assert "PASS:\nOutputs identical" in capsys.readouterr().out
 
@@ -357,7 +411,7 @@ def test_main_times_a_stored_target_from_its_published_metrics(
     stored_result = output["results"][1]
     assert stored_result["runtime_seconds"] == 166
     assert stored_result["step_timings"] == {"oasislmf.manager.interface": 165.75}
-    assert output["comparison"]["reference"] == "PiWind 2.5.4 (S3 baseline)"
+    assert _group_for(output, "PiWind")["report"]["reference"] == "PiWind 2.5.4 (S3 baseline)"
     report_text = output["report_path"].read_text()
     assert "- PiWind 2.5.4 (S3 baseline): success (166s)" in report_text
     assert "210.50 (+27.0%)" in report_text
@@ -389,8 +443,9 @@ def test_main_compares_stored_targets_that_have_no_runtimes(
     with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.main"):
         output = main(config_path)
 
-    assert output["comparison"]["reference"] == "PiWind 2.5.6 (S3 baseline)"
-    assert output["comparison"]["status"] == "pass"
+    report = _group_for(output, "PiWind")["report"]
+    assert report["reference"] == "PiWind 2.5.6 (S3 baseline)"
+    assert report["status"] == "pass"
     assert "No target reported a runtime" in caplog.text
 
 
@@ -413,7 +468,7 @@ def test_main_runs_nothing_when_the_only_version_is_already_stored(
 
     mock_model_main.assert_not_called()
     assert [r["version"] for r in output["results"]] == ["2.5.6 (S3 baseline)"]
-    assert "only one target was configured" in capsys.readouterr().out
+    assert "only one target for this model" in capsys.readouterr().out
 
 
 @mock.patch("alpaca.benchmark.main.download_baseline")
@@ -474,7 +529,7 @@ def test_main_reports_a_stored_target_with_no_recorded_runtime(
 
     stored_result = output["results"][1]
     assert stored_result["runtime_seconds"] is None
-    assert output["comparison"]["reference"] == "PiWind 2.5.6"
+    assert _group_for(output, "PiWind")["report"]["reference"] == "PiWind 2.5.6"
     assert "- PiWind 2.5.4 (S3 baseline): success (runtime unknown)" in output["report_path"].read_text()
 
 
@@ -667,7 +722,7 @@ def test_main_skips_comparison_for_run_test_suite(mock_testsuite_main, tmp_path,
 
     output = main(config_path)
 
-    assert output["comparison"] is None
+    assert _group_for(output, "PiWind")["report"] is None
     assert "no single output to compare" in capsys.readouterr().out
 
 
