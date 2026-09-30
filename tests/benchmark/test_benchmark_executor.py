@@ -8,11 +8,11 @@ import threading
 import time
 
 
-def _entry(label, run_directory, model="PiWind", version="2.3.3", run_test_suite=False):
-    run_config = {"label": label, "RESULT_DIRECTORY": str(run_directory)}
-    if run_test_suite:
-        run_config["RUN_TEST_SUITE"] = True
-    return {"label": label, "model": model, "version": version, "run_config": run_config}
+def _entry(label, run_directory, model="PiWind", version="2.3.3", test=None):
+    return {
+        "label": label, "model": model, "test": test, "version": version,
+        "run_config": {"label": label, "RESULT_DIRECTORY": str(run_directory)},
+    }
 
 
 def _write_result_file(run_directory, content):
@@ -32,33 +32,6 @@ def test_run_benchmark_targets_reuses_model_main_per_target(mock_model_main, tmp
     assert run_configs_called == [entry["run_config"] for entry in run_configs]
 
 
-@mock.patch("alpaca.benchmark.executor.testsuite_main")
-@mock.patch("alpaca.benchmark.executor.model_main")
-def test_run_benchmark_targets_dispatches_run_test_suite_targets_to_testsuite_main(mock_model_main, mock_testsuite_main, tmp_path):
-    """A target with RUN_TEST_SUITE set runs via testsuite_main instead of model_main, and
-    an ordinary target alongside it still runs via model_main as normal.
-    """
-    run_configs = [
-        _entry("suite", tmp_path / "suite", run_test_suite=True),
-        _entry("ordinary", tmp_path / "ordinary"),
-    ]
-
-    run_benchmark_targets(run_configs, "sequential")
-
-    mock_testsuite_main.assert_called_once_with(run_configs[0]["run_config"])
-    mock_model_main.assert_called_once_with(run_configs[1]["run_config"])
-
-
-@mock.patch("alpaca.benchmark.executor.testsuite_main")
-def test_run_benchmark_targets_reports_a_failed_test_suite(mock_testsuite_main, tmp_path):
-    mock_testsuite_main.side_effect = RuntimeError("a test failed")
-    run_configs = [_entry("suite", tmp_path / "suite", run_test_suite=True)]
-
-    results = run_benchmark_targets(run_configs, "sequential")
-
-    assert results[0]["status"] == "failed"
-
-
 @mock.patch("alpaca.benchmark.executor.model_main")
 def test_run_benchmark_targets_reports_success(mock_model_main, tmp_path):
     """Without a result.txt, runtime_seconds falls back to the wall-clock timing."""
@@ -68,11 +41,11 @@ def test_run_benchmark_targets_reports_success(mock_model_main, tmp_path):
 
     assert results == [
         {
-            "label": "baseline", "model": "PiWind", "version": "2.3.3", "status": "success",
+            "label": "baseline", "model": "PiWind", "test": None, "version": "2.3.3", "status": "success",
             "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
         },
         {
-            "label": "comparison", "model": "PiWind", "version": "2.4.9", "status": "success",
+            "label": "comparison", "model": "PiWind", "test": None, "version": "2.4.9", "status": "success",
             "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
         },
     ]

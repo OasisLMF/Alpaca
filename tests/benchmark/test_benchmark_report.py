@@ -1,9 +1,9 @@
 from alpaca.benchmark.report import build_report_text, write_report
 
 
-def _result(model, version, status, runtime_seconds, step_timings=None):
+def _result(model, version, status, runtime_seconds, step_timings=None, test=None):
     return {
-        "label": f"{model}-{version}", "model": model, "version": version, "status": status,
+        "label": f"{model}-{version}", "model": model, "test": test, "version": version, "status": status,
         "runtime_seconds": runtime_seconds, "step_timings": step_timings or {},
     }
 
@@ -16,8 +16,8 @@ def _comparison(reference, comparisons):
     }
 
 
-def _group(model, report=None, skip_reason=""):
-    return {"model": model, "report": report, "skip_reason": skip_reason}
+def _group(name, report=None, skip_reason=""):
+    return {"group": name, "report": report, "skip_reason": skip_reason}
 
 
 PASSING_COMPARISON = _comparison("PiWind 2.4.9", [{"target": "PiWind 2.3.3", "status": "pass", "different_files": []}])
@@ -252,3 +252,27 @@ def test_write_report_creates_missing_parent_directories(tmp_path):
     report_path = write_report("report", tmp_path / "a" / "b" / "c")
 
     assert report_path.exists()
+
+
+def test_build_report_text_labels_each_test_section_and_run():
+    results = [
+        _result("PiWind", "2.5.6", "success", 100, test="test_1"),
+        _result("PiWind", "2.5.7", "success", 110, test="test_1"),
+        _result("PiWind", "2.5.6", "success", 50, test="test_2"),
+        _result("PiWind", "2.5.7", "success", 55, test="test_2"),
+    ]
+    comparison_groups = [
+        _group("PiWind test_1", report=_comparison(
+            "PiWind test_1 2.5.6", [{"target": "PiWind test_1 2.5.7", "status": "pass", "different_files": []}]
+        )),
+        _group("PiWind test_2", report=_comparison(
+            "PiWind test_2 2.5.6", [{"target": "PiWind test_2 2.5.7", "status": "pass", "different_files": []}]
+        )),
+    ]
+
+    report_text = build_report_text(results, comparison_groups)
+
+    assert "\nPiWind test_1\n-------------\n" in report_text
+    assert "\nPiWind test_2\n-------------\n" in report_text
+    assert "- PiWind test_1 2.5.6: success (100s)" in report_text
+    assert "- PiWind test_2 2.5.7: success (55s)" in report_text

@@ -47,6 +47,52 @@ def benchmark_locations(config):
     return locations
 
 
+def benchmark_tests(config):
+    """List the tests a benchmark runs for each model, in configured order without duplicates.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Returns:
+        list: Every TESTS entry, deduplicated, or [None] when TESTS isn't set, meaning each
+            model runs once from PATH_TO_OASISLMF_JSON rather than once per test.
+    """
+    tests = []
+    for test in config.get("TESTS") or []:
+        if test and test not in tests:
+            tests.append(test)
+    return tests or [None]
+
+
+def oasislmf_json_path(test):
+    """Build the path, from the base of a model's REPO_LOCATION, to a test's oasislmf.json.
+
+    Args:
+        test: A TESTS entry, e.g. 'test_1'.
+
+    Returns:
+        str: 'tests/{test}/oasislmf.json'.
+    """
+    return f"tests/{test}/oasislmf.json"
+
+
+def group_name(model, test):
+    """Name the group of targets a target is timed and diffed against.
+
+    Targets are only compared within the same model and test, since a different model, or
+    the same model run on a different test, is expected to produce different output and
+    take a different amount of time.
+
+    Args:
+        model: Short model name, see model_name_from_location.
+        test: The target's TESTS entry, or None when TESTS isn't set.
+
+    Returns:
+        str: '{model} {test}', or just '{model}' when there's no test.
+    """
+    return f"{model} {test}" if test else model
+
+
 def oasislmf_sources(config):
     """List the OasisLMF installs a benchmark compares, in configured order.
 
@@ -122,8 +168,8 @@ def build_benchmark_plan(config, targets):
     Returns:
         dict: With keys 'models' (each distinct model name under benchmark, see
             model_name_from_location), 'targets' (one '{model}: {install source}' line per
-            target, marking any target taken from a stored S3 baseline rather than run) and
-            'execution_mode'.
+            target, or '{model} {test}: {install source}' when TESTS is set, marking any
+            target taken from a stored S3 baseline rather than run) and 'execution_mode'.
 
     Raises:
         OasisAlpacaConfigError: If EXECUTION_MODE is set to something other than
@@ -137,7 +183,7 @@ def build_benchmark_plan(config, targets):
     target_lines = []
     for target in targets:
         suffix = " (S3 baseline)" if target["source"] == STORED_SOURCE else ""
-        target_lines.append(f"{target['model']}: {target['source_label']}{suffix}")
+        target_lines.append(f"{group_name(target['model'], target['test'])}: {target['source_label']}{suffix}")
 
     return {"models": models, "targets": target_lines, "execution_mode": resolve_execution_mode(config)}
 
@@ -145,24 +191,24 @@ def build_benchmark_plan(config, targets):
 SHARED_MODEL_CONFIG_KEYS = [
     "AMI_ID", "SECURITY_GROUP_ID", "SUBNET_ID", "IAM_INSTANCE_PROFILE", "PATH_TO_OASISLMF_JSON",
     "AWS_REGION", "INSTANCE_TYPE", "DISK_GB", "LOG_LEVEL",
-    "MAX_LIFETIME_HOURS", "SSH_MAX_RETRIES", "AWS_PROFILE", "DEBUG", "RUN_TEST_SUITE"
+    "MAX_LIFETIME_HOURS", "SSH_MAX_RETRIES", "AWS_PROFILE", "DEBUG"
 ]
 
 
-def _target_slug(model, version_label, taken):
+def _target_slug(name, version_label, taken):
     """Build a unique, path-safe directory name for one benchmark target.
 
     Args:
-        model: Short model name for the target.
+        name: The target's group name, see group_name.
         version_label: The target's version label, e.g. '2.5.6' or 'branch:my-branch'.
         taken: Slugs already used by earlier targets, to disambiguate against.
 
     Returns:
-        str: '{model}-{version_label}' with anything outside [A-Za-z0-9._-] replaced by '-',
+        str: '{name}-{version_label}' with anything outside [A-Za-z0-9._-] replaced by '-',
             suffixed with a counter if an earlier target already claimed that name (two
             locations can share a model name).
     """
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{model}-{version_label}").strip("-")
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{name}-{version_label}").strip("-")
     if slug not in taken:
         return slug
     suffix = 2
@@ -172,32 +218,37 @@ def _target_slug(model, version_label, taken):
 
 
 def build_benchmark_targets(config, stored_versions=()):
-    """Build one benchmark target per model location and OasisLMF install under comparison.
+    """Build one benchmark target per model location, test and OasisLMF install under comparison.
 
-    Targets are peers: every location in REPO_LOCATIONS is paired with every OasisLMF
-    install in OASISLMF_VERSIONS/OASISLMF_BRANCHES, and all of them are run, timed and
-    diffed against each other (see alpaca.benchmark.main). Each target reuses every shared
-    EC2 setting from the benchmark config but gets its own REPO_LOCATION,
-    OASISLMF_VERSION/OASISLMF_BRANCH, EC2_NAME and RESULT_DIRECTORY, since the runs execute
+    Targets are peers: every location in REPO_LOCATIONS is paired with every TESTS entry (or
+    run once from PATH_TO_OASISLMF_JSON when TESTS isn't set) and every OasisLMF install in
+    OASISLMF_VERSIONS/OASISLMF_BRANCHES, and all of them are run, timed and diffed against
+    the other targets of the same model and test (see alpaca.benchmark.main). A test target
+    runs tests/<name>/oasislmf.json (see oasislmf_json_path) as its PATH_TO_OASISLMF_JSON, so
+    it's an ordinary model run on its own EC2 instance like any other target. Each target
+    reuses every shared EC2 setting from the benchmark config but gets its own REPO_LOCATION,
+    PATH_TO_OASISLMF_JSON, OASISLMF_VERSION/OASISLMF_BRANCH, EC2_NAME and RESULT_DIRECTORY,
+    since the runs execute
     as ordinary, independent 'alpaca model' runs (which may happen concurrently) and must
     not race on the same instance settings or output directory. A branch always takes
     priority over a version on its own target (see alpaca.commands.oasislmf_install_commands),
     so a branch target carries no version at all. EC2_NAME is always derived as
-    'Alpaca {model} {version}' (e.g. 'Alpaca PiWind 2.5.4', or 'Alpaca PiWind
-    branch:my-branch'), overriding any EC2_NAME set at the top level, so concurrent
+    'Alpaca {model} {version}' (e.g. 'Alpaca PiWind 2.5.4', 'Alpaca PiWind
+    branch:my-branch', or 'Alpaca PiWind test_1 2.5.4' for a test target), overriding any EC2_NAME set at the top level, so concurrent
     instances are identifiable in the AWS console rather than all sharing one name.
 
     Args:
         config: Validated benchmark configuration dictionary.
-        stored_versions: (model, version) pairs already held in BENCHMARK_BUCKET (see
-            alpaca.benchmark.s3_baseline.resolve_stored_versions). A version target whose
-            (model, version) pair is listed here is marked as stored, and is downloaded
-            instead of run on EC2.
+        stored_versions: (model, test, version) triples already held in BENCHMARK_BUCKET
+            (see alpaca.benchmark.s3_baseline.resolve_stored_versions), with test None when
+            TESTS isn't set. A version target whose triple is listed here is marked as
+            stored, and is downloaded instead of run on EC2.
 
     Returns:
-        list[dict]: One entry per target, location by location, each with keys 'label' (a
-            unique, path-safe name for the target), 'model' (short model name, see
-            model_name_from_location), 'version' (the pinned version, or 'branch:{name}' when
+        list[dict]: One entry per target, location by location then test by test, each
+            with keys 'label' (a unique, path-safe name for the target), 'model' (short model
+            name, see model_name_from_location), 'test' (the TESTS entry, or None when TESTS
+            isn't set), 'version' (the pinned version, or 'branch:{name}' when
             a branch is set), 'source_label' (see source_label),
             'source' (LIVE_SOURCE, or STORED_SOURCE when it comes from BENCHMARK_BUCKET) and
             'run_config' (a config dict suitable for alpaca.model.main.main).
@@ -217,6 +268,7 @@ def build_benchmark_targets(config, stored_versions=()):
             f"from the downloaded results, got '{result_directory}'"
         )
     sources = oasislmf_sources(config)
+    tests = benchmark_tests(config)
     if resolve_execution_mode(config) == "parallel":
         config["DEBUG"] = False
 
@@ -224,28 +276,34 @@ def build_benchmark_targets(config, stored_versions=()):
     labels = set()
     for location in locations:
         model = model_name_from_location(location)
-        for branch, version in sources:
-            version_label = f"branch:{branch}" if branch else version
-            label = _target_slug(model, version_label, labels)
-            labels.add(label)
+        for test in tests:
+            name = group_name(model, test)
+            for branch, version in sources:
+                version_label = f"branch:{branch}" if branch else version
+                label = _target_slug(name, version_label, labels)
+                labels.add(label)
 
-            run_config = {key: config[key] for key in SHARED_MODEL_CONFIG_KEYS if key in config}
-            run_config["EC2_NAME"] = f"Alpaca {model} {version_label}"
-            run_config["REPO_LOCATION"] = location
-            run_config["RESULT_DIRECTORY"] = f"{result_directory}/{label}"
-            if branch:
-                run_config["OASISLMF_BRANCH"] = branch
-            else:
-                run_config["OASISLMF_VERSION"] = version
+                run_config = {key: config[key] for key in SHARED_MODEL_CONFIG_KEYS if key in config}
+                run_config["EC2_NAME"] = f"Alpaca {name} {version_label}"
+                run_config["REPO_LOCATION"] = location
+                run_config["RESULT_DIRECTORY"] = f"{result_directory}/{label}"
+                if test:
+                    run_config["PATH_TO_OASISLMF_JSON"] = oasislmf_json_path(test)
+                if branch:
+                    run_config["OASISLMF_BRANCH"] = branch
+                else:
+                    run_config["OASISLMF_VERSION"] = version
 
-            targets.append({
-                "label": label,
-                "model": model,
-                "version": version_label,
-                "source_label": source_label(branch, version),
-                "source": STORED_SOURCE if version and (model, version) in stored_versions else LIVE_SOURCE,
-                "run_config": run_config,
-            })
+                stored = version and (model, test, version) in stored_versions
+                targets.append({
+                    "label": label,
+                    "model": model,
+                    "test": test,
+                    "version": version_label,
+                    "source_label": source_label(branch, version),
+                    "source": STORED_SOURCE if stored else LIVE_SOURCE,
+                    "run_config": run_config,
+                })
     return targets
 
 

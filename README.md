@@ -107,7 +107,7 @@ file. Please note that `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are boto3
 variables and not Alpaca ones and will not have the `ALPACA_` prefix.
 
 The benchmark keys that hold several values (`REPO_LOCATIONS`, `OASISLMF_VERSIONS`,
-`OASISLMF_BRANCHES`) take a JSON array in the config file. Since an environment variable and
+`OASISLMF_BRANCHES`, `TESTS`) take a JSON array in the config file. Since an environment variable and
 an interactive answer can only hold text, they also accept a JSON array as a string
 (`'["2.5.6", "2.5.4"]'`) or a single bare value, which is read as a one-entry list.
 
@@ -131,8 +131,10 @@ loads the config:
 | `IAM_INSTANCE_PROFILE` — instance profile granting SSM and S3 access | ✔ | ✔ | ✔ | ✔ |
 | `REPO_LOCATION` — GitHub URL or `s3://bucket` holding the model | ✔ | ✔ | ✔ | |
 | `REPO_LOCATIONS` — JSON array of model locations to benchmark | | | | ✔ |
-| `PATH_TO_OASISLMF_JSON` — path to `oasislmf.json` within the repo | ✔ | | ✔ | ✔ |
+| `PATH_TO_OASISLMF_JSON` — path to `oasislmf.json` within the repo | ✔ | | ✔ | ✔\* |
 | `PATH_TO_DOCKER_COMPOSE` — path to the compose file or deploy script | | | ✔ | |
+
+\* a benchmark takes either `PATH_TO_OASISLMF_JSON` or `TESTS`, not both
 
 ### Optional config
 
@@ -153,6 +155,7 @@ loads the config:
 | `PYTEST_ARGS` | *(none)* | pytest | Extra arguments for pytest (`-vv` is always passed) |
 | `OASISLMF_VERSIONS` | `[]` | benchmark | JSON array of versions to benchmark, one target each |
 | `OASISLMF_BRANCHES` | `[]` | benchmark | JSON array of branches to benchmark, one target each |
+| `TESTS` | `[]` | benchmark | JSON array of test names, each run from `tests/<name>/oasislmf.json` — see [Tests](#tests) |
 | `EXECUTION_MODE` | `parallel` | benchmark | `parallel` or `sequential` |
 | `COMPARISON_TOLERANCE` | `1e-6` | benchmark | Relative tolerance for numeric cells when diffing outputs |
 | `BENCHMARK_BUCKET` | *(none)* | benchmark | `s3://bucket` holding versioned baseline outputs and metrics |
@@ -257,16 +260,39 @@ back another model's comparison. A target that fails is reported as failed; the 
 run and report. Because the timings and comparison are read from local files, a benchmark
 needs a local `RESULT_DIRECTORY` and rejects an `s3://` one before starting anything.
 
+### Tests
+
+`TESTS` runs several tests of one model — typically the same model data with a different
+event set or settings per test — without a bucket or repository per test. Each entry names a
+directory under the model's `tests/`, and that directory's `oasislmf.json` is what the target
+runs, in place of `PATH_TO_OASISLMF_JSON`:
+
+```json
+"REPO_LOCATIONS": ["s3://my-bucket/MyModel"],
+"TESTS": ["test_1", "test_2"],
+"OASISLMF_VERSIONS": ["2.5.5", "2.5.7"]
+```
+
+Every model × test × version is its own target: an ordinary `alpaca model` run on its own
+instance (`Alpaca {model} {test} {version}`), downloading into its own
+`RESULT_DIRECTORY` subfolder (e.g. `./runs/MyModel-test_1-2.5.5`). The
+example above runs four instances. Comparison is scoped per model *and* test, so `test_1` at
+2.5.5 is compared with `test_1` at 2.5.7, but never with `test_2`, and the report has one
+section per test. Test names are case-sensitive and must match the directory names exactly.
+
 ### Stored S3 baselines
 
 Setting `BENCHMARK_BUCKET` lets a benchmark reuse results instead of paying to re-run them.
 Baselines are stored per model and OasisLMF version as `{model}/{version}/output/*` and
-`{model}/{version}/performance/result.txt` (e.g. `PiWind/2.5.6/output/*`).
+`{model}/{version}/performance/result.txt` (e.g. `PiWind/2.5.6/output/*`), or per model, test
+and version as `{model}/{test}/{version}/...` when `TESTS` is set (e.g.
+`PiWind/test_1/2.5.6/output/*`). The two are kept apart: a baseline published from
+`PATH_TO_OASISLMF_JSON` is never reused for a test, or the other way round.
 
 * Any `REPO_LOCATIONS`/`OASISLMF_VERSIONS` pair already stored in the bucket is downloaded
   and treated exactly like a run that just finished, rather than being run on EC2. Because
-  baselines are keyed by model and version together, this applies independently to every
-  `REPO_LOCATIONS` entry.
+  baselines are keyed by model, test and version together, this applies independently to
+  every `REPO_LOCATIONS` and `TESTS` entry.
 * `PUBLISH_BASELINE` set to `True` runs every version target live and publishes its output
   and timings as that model/version's new stored baseline, overwriting anything already
   there. It requires `BENCHMARK_BUCKET` and at least one `OASISLMF_VERSIONS` entry; branch
