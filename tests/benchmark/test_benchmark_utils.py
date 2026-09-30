@@ -1,8 +1,11 @@
-from alpaca.benchmark.utils import REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK
+from alpaca.benchmark.utils import REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_tests_config
+from alpaca.exceptions import OasisAlpacaConfigError
 from alpaca.inputs import (
     REPO_LOCATION, REPO_LOCATIONS, OASISLMF_VERSION, OASISLMF_VERSIONS, BENCHMARK_BUCKET, PUBLISH_BASELINE,
-    OASISLMF_BRANCH, OASISLMF_BRANCHES
+    OASISLMF_BRANCH, OASISLMF_BRANCHES, PATH_TO_OASISLMF_JSON, TESTS
 )
+
+import pytest
 
 
 def test_required_config_benchmark_requires_the_model_locations():
@@ -34,7 +37,7 @@ def test_list_config_keys_declare_list_defaults():
     """Test that the list-valued keys declare themselves as lists, which is what makes
     alpaca.config parse them as JSON arrays.
     """
-    for key in (REPO_LOCATIONS, OASISLMF_VERSIONS, OASISLMF_BRANCHES):
+    for key in (REPO_LOCATIONS, OASISLMF_VERSIONS, OASISLMF_BRANCHES, TESTS):
         assert isinstance(key[2], list)
 
 
@@ -43,3 +46,34 @@ def test_required_and_optional_config_benchmark_do_not_overlap():
     required_keys = {key for key, _, _ in REQUIRED_CONFIG_BENCHMARK}
     optional_keys = {key for key, _, _ in OPTIONAL_CONFIG_BENCHMARK}
     assert required_keys.isdisjoint(optional_keys)
+
+
+def test_path_to_oasislmf_json_and_tests_are_both_optional():
+    """Either one names what a target runs, so neither is required on its own."""
+    assert PATH_TO_OASISLMF_JSON in OPTIONAL_CONFIG_BENCHMARK
+    assert TESTS in OPTIONAL_CONFIG_BENCHMARK
+
+
+def test_validate_tests_config_accepts_path_to_oasislmf_json_alone():
+    validate_tests_config({"PATH_TO_OASISLMF_JSON": "./oasislmf.json"})
+
+
+def test_validate_tests_config_accepts_tests_alone():
+    validate_tests_config({"TESTS": ["test_1", "test_2"]})
+
+
+def test_validate_tests_config_raises_without_either():
+    with pytest.raises(OasisAlpacaConfigError, match="PATH_TO_OASISLMF_JSON or TESTS is required"):
+        validate_tests_config({"TESTS": []})
+
+
+def test_validate_tests_config_raises_with_both():
+    """A target runs one oasislmf.json, so it's unclear which one to use when both are set."""
+    with pytest.raises(OasisAlpacaConfigError, match="not both"):
+        validate_tests_config({"PATH_TO_OASISLMF_JSON": "./oasislmf.json", "TESTS": ["test_1"]})
+
+
+@pytest.mark.parametrize("test", ["tests/test_1", "test_1/oasislmf.json", "..", "."])
+def test_validate_tests_config_raises_on_a_test_that_is_not_a_directory_name(test):
+    with pytest.raises(OasisAlpacaConfigError, match="directory name under tests/"):
+        validate_tests_config({"TESTS": [test]})

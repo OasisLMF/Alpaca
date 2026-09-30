@@ -62,3 +62,9 @@ RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket
 SECURITY_GROUP_ID = ("SECURITY_GROUP_ID", "Security group id of EC2 instance", "MySecurityGroup")
 SSH_MAX_RETRIES = ("SSH_MAX_RETRIES", "Maximum number of SSH-over-SSM connection attempts before timeout", 60)
 SUBNET_ID = ("SUBNET_ID", "Subnet id of EC2 instance", "MySubnetID")
+TESTS = (
+    "TESTS",
+    "JSON array of test names to benchmark (benchmark mode), each run from tests/<name>/oasislmf.json in every "
+    "REPO_LOCATIONS entry at every OASISLMF_VERSIONS/OASISLMF_BRANCHES entry, replaces PATH_TO_OASISLMF_JSON",
+    []
+)

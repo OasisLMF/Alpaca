@@ -1,4 +1,5 @@
 from alpaca.model.main import main as model_main
+from alpaca.benchmark.scripts import group_name
 from alpaca.benchmark.timing import resolve_model_runtime
 from alpaca.logging_context import log_target
 
@@ -21,15 +22,15 @@ def _run_target(run_config_entry):
     'runtime_seconds' by the model's own reported runtime (see resolve_model_runtime),
     with the wall-clock kept separately as 'total_runtime_seconds'. Every log line emitted
     during the call (including from other modules, e.g. alpaca.remote_controller) is tagged
-    with this target's model/version via log_target, so concurrent targets' interleaved
+    with this target's model/test/version via log_target, so concurrent targets' interleaved
     console output is distinguishable (see alpaca.logging_context.TargetFilter).
 
     Args:
         run_config_entry: One entry as returned by build_benchmark_targets, with 'label',
-            'model', 'version' and 'run_config' keys.
+            'model', 'test', 'version' and 'run_config' keys.
 
     Returns:
-        dict: {'label', 'model', 'version', 'status', 'runtime_seconds',
+        dict: {'label', 'model', 'test', 'version', 'status', 'runtime_seconds',
             'total_runtime_seconds', 'step_timings'}. 'label' is the target's own label, so a
             result can be traced back to the target that produced it. 'status' is 'success'
             unless alpaca.model.main.main raises, in which case it is 'failed' and the
@@ -40,7 +41,8 @@ def _run_target(run_config_entry):
     """
     start = time.monotonic()
     status = "success"
-    with log_target(f"{run_config_entry['model']} {run_config_entry['version']}"):
+    name = group_name(run_config_entry["model"], run_config_entry["test"])
+    with log_target(f"{name} {run_config_entry['version']}"):
         try:
             model_main(run_config_entry["run_config"])
         except Exception:
@@ -58,6 +60,7 @@ def _run_target(run_config_entry):
     return {
         "label": run_config_entry["label"],
         "model": run_config_entry["model"],
+        "test": run_config_entry["test"],
         "version": run_config_entry["version"],
         "status": status,
         "runtime_seconds": runtime_seconds,
@@ -77,7 +80,7 @@ def run_benchmark_targets(run_configs, execution_mode="parallel"):
             Any beyond that wait for a slot. 'sequential' runs them one after another.
 
     Returns:
-        list[dict]: One result per target, in run_configs order, each with 'label', 'model',
+        list[dict]: One result per target, in run_configs order, each with 'label', 'model', 'test',
             'version', 'status', 'runtime_seconds', 'total_runtime_seconds' and
             'step_timings' (see _run_target).
     """

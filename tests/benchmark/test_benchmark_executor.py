@@ -8,8 +8,11 @@ import threading
 import time
 
 
-def _entry(label, run_directory, model="PiWind", version="2.3.3"):
-    return {"label": label, "model": model, "version": version, "run_config": {"label": label, "RESULT_DIRECTORY": str(run_directory)}}
+def _entry(label, run_directory, model="PiWind", version="2.3.3", test=None):
+    return {
+        "label": label, "model": model, "test": test, "version": version,
+        "run_config": {"label": label, "RESULT_DIRECTORY": str(run_directory)},
+    }
 
 
 def _write_result_file(run_directory, content):
@@ -38,11 +41,11 @@ def test_run_benchmark_targets_reports_success(mock_model_main, tmp_path):
 
     assert results == [
         {
-            "label": "baseline", "model": "PiWind", "version": "2.3.3", "status": "success",
+            "label": "baseline", "model": "PiWind", "test": None, "version": "2.3.3", "status": "success",
             "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
         },
         {
-            "label": "comparison", "model": "PiWind", "version": "2.4.9", "status": "success",
+            "label": "comparison", "model": "PiWind", "test": None, "version": "2.4.9", "status": "success",
             "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
         },
     ]
