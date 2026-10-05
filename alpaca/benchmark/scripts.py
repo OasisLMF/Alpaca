@@ -93,6 +93,23 @@ def group_name(model, test):
     return f"{model} {test}" if test else model
 
 
+def benchmark_versions(config):
+    """List the OasisLMF versions a benchmark compares, in configured order.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Returns:
+        list: [OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION] when that pair is set (see
+            alpaca.benchmark.utils.validate_version_pair_config), otherwise every non-blank
+            OASISLMF_VERSIONS entry.
+    """
+    pair = [config.get("OASISLMF_BASELINE_VERSION"), config.get("OASISLMF_TEST_VERSION")]
+    if any(pair):
+        return [version for version in pair if version]
+    return [version for version in config.get("OASISLMF_VERSIONS") or [] if version]
+
+
 def oasislmf_sources(config):
     """List the OasisLMF installs a benchmark compares, in configured order.
 
@@ -106,14 +123,14 @@ def oasislmf_sources(config):
 
     Returns:
         list[tuple]: One (branch, version) pair per install, where exactly one of the two is
-            set: OASISLMF_VERSIONS entries first, then OASISLMF_BRANCHES entries, without
-            duplicates.
+            set: version entries first (see benchmark_versions), then OASISLMF_BRANCHES
+            entries, without duplicates.
 
     Raises:
-        OasisAlpacaConfigError: If neither OASISLMF_VERSIONS nor OASISLMF_BRANCHES holds an
-            entry.
+        OasisAlpacaConfigError: If there's no version (see benchmark_versions) and no
+            OASISLMF_BRANCHES entry.
     """
-    sources = [(None, version) for version in config.get("OASISLMF_VERSIONS") or [] if version]
+    sources = [(None, version) for version in benchmark_versions(config)]
     sources.extend((branch, None) for branch in config.get("OASISLMF_BRANCHES") or [] if branch)
 
     deduplicated = []
@@ -121,7 +138,10 @@ def oasislmf_sources(config):
         if source not in deduplicated:
             deduplicated.append(source)
     if not deduplicated:
-        raise OasisAlpacaConfigError("OASISLMF_VERSIONS or OASISLMF_BRANCHES must hold at least one entry to benchmark")
+        raise OasisAlpacaConfigError(
+            "Nothing to benchmark: set OASISLMF_VERSIONS, OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION, "
+            "or OASISLMF_BRANCHES"
+        )
     return deduplicated
 
 
@@ -254,8 +274,8 @@ def build_benchmark_targets(config, stored_versions=()):
             'run_config' (a config dict suitable for alpaca.model.main.main).
 
     Raises:
-        OasisAlpacaConfigError: If REPO_LOCATIONS holds no model to benchmark, or neither
-            OASISLMF_VERSIONS nor OASISLMF_BRANCHES holds an entry (see oasislmf_sources).
+        OasisAlpacaConfigError: If REPO_LOCATIONS holds no model to benchmark, or there's no
+            version or branch to install (see oasislmf_sources).
     """
     locations = benchmark_locations(config)
     if not locations:

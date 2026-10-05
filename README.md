@@ -155,6 +155,8 @@ loads the config:
 | `PYTEST_ARGS` | *(none)* | pytest | Extra arguments for pytest (`-vv` is always passed) |
 | `OASISLMF_VERSIONS` | `[]` | benchmark | JSON array of versions to benchmark, one target each |
 | `OASISLMF_BRANCHES` | `[]` | benchmark | JSON array of branches to benchmark, one target each |
+| `OASISLMF_BASELINE_VERSION` | *(none)* | benchmark | Version to compare against, reused from `BENCHMARK_BUCKET` when stored; set with `OASISLMF_TEST_VERSION` in place of `OASISLMF_VERSIONS` — see [Baseline and test versions](#baseline-and-test-versions) |
+| `OASISLMF_TEST_VERSION` | *(none)* | benchmark | Version that always runs live, even when stored; set with `OASISLMF_BASELINE_VERSION` |
 | `TESTS` | `[]` | benchmark | JSON array of test names, each run from `tests/<name>/oasislmf.json` — see [Tests](#tests) |
 | `EXECUTION_MODE` | `parallel` | benchmark | `parallel` or `sequential` |
 | `COMPARISON_TOLERANCE` | `1e-6` | benchmark | Relative tolerance for numeric cells when diffing outputs |
@@ -295,8 +297,28 @@ and version as `{model}/{test}/{version}/...` when `TESTS` is set (e.g.
   every `REPO_LOCATIONS` and `TESTS` entry.
 * `PUBLISH_BASELINE` set to `True` runs every version target live and publishes its output
   and timings as that model/version's new stored baseline, overwriting anything already
-  there. It requires `BENCHMARK_BUCKET` and at least one `OASISLMF_VERSIONS` entry; branch
+  there. It requires `BENCHMARK_BUCKET` and at least one version (`OASISLMF_VERSIONS` or the
+  baseline/test pair below); branch
   targets are skipped, having no version to publish under.
+
+### Baseline and test versions
+
+With `OASISLMF_VERSIONS`, a version that's already stored is never run, so once every listed
+version has been published a benchmark runs nothing. To always test a version, name the pair
+instead of `OASISLMF_VERSIONS`:
+
+```json
+"OASISLMF_BASELINE_VERSION": "2.5.7",
+"OASISLMF_TEST_VERSION": "2.5.8",
+"BENCHMARK_BUCKET": "s3://my-benchmark-bucket"
+```
+
+The baseline version is downloaded from the bucket when it's stored there (and run live when
+it isn't), while the test version always runs live on EC2, even if a baseline for it is
+already stored; the two are then compared like any other targets. Set both or neither, not
+alongside `OASISLMF_VERSIONS`, and not to the same version. `OASISLMF_BRANCHES` and `TESTS`
+work with the pair as they do with `OASISLMF_VERSIONS`, and `PUBLISH_BASELINE` still runs and
+publishes both versions.
 
 ## Results
 

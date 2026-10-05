@@ -1,5 +1,7 @@
 from alpaca.benchmark.comparison import find_output_dir
-from alpaca.benchmark.scripts import benchmark_locations, benchmark_tests, group_name, model_name_from_location
+from alpaca.benchmark.scripts import (
+    benchmark_locations, benchmark_tests, benchmark_versions, group_name, model_name_from_location
+)
 from alpaca.benchmark.timing import find_result_file
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from botocore.exceptions import ClientError
@@ -75,15 +77,16 @@ def validate_s3_baseline_config(config):
 
     Raises:
         OasisAlpacaConfigError: If PUBLISH_BASELINE is set without BENCHMARK_BUCKET, or
-            without any OASISLMF_VERSIONS entry to publish under, since a baseline is stored
-            under a version and a branch target hasn't got one.
+            without any version to publish under (see
+            alpaca.benchmark.scripts.benchmark_versions), since a baseline is stored under a
+            version and a branch target hasn't got one.
     """
     if not config.get("PUBLISH_BASELINE", False):
         return
 
     if not config.get("BENCHMARK_BUCKET"):
         raise OasisAlpacaConfigError("PUBLISH_BASELINE requires BENCHMARK_BUCKET to be set")
-    if not config.get("OASISLMF_VERSIONS"):
+    if not benchmark_versions(config):
         raise OasisAlpacaConfigError("PUBLISH_BASELINE requires OASISLMF_VERSIONS entries, as a branch has no version to publish under")
 
 
@@ -94,7 +97,9 @@ def resolve_stored_versions(config):
     run: the stored output and performance metrics stand in for it. Baselines are keyed by
     model, test and version together, so this is checked per REPO_LOCATIONS and TESTS entry
     rather than being limited to a single-model benchmark. PUBLISH_BASELINE opts out entirely, since
-    republishing a version means running it rather than reusing what's already there.
+    republishing a version means running it rather than reusing what's already there, and
+    OASISLMF_TEST_VERSION is never looked up, since it's the version the benchmark is there to
+    run.
 
     Args:
         config: Validated benchmark configuration dictionary.
@@ -105,7 +110,8 @@ def resolve_stored_versions(config):
             isn't set.
     """
     bucket = config.get("BENCHMARK_BUCKET")
-    versions = config.get("OASISLMF_VERSIONS") or []
+    test_version = config.get("OASISLMF_TEST_VERSION")
+    versions = [version for version in benchmark_versions(config) if version != test_version]
     models = [model_name_from_location(location) for location in benchmark_locations(config)]
     if not bucket or not versions or not models:
         return set()

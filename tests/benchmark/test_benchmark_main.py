@@ -1,8 +1,11 @@
 from alpaca.benchmark.main import main
+from alpaca.benchmark.s3_baseline import upload_baseline
 from alpaca.exceptions import OasisAlpacaConfigError
+from moto import mock_aws
 from pathlib import Path
 from unittest import mock
 
+import boto3
 import logging
 import pytest
 import json
@@ -850,3 +853,37 @@ def test_main_report_notes_comparison_skipped_when_a_target_failed(mock_model_ma
     report_text = output["report_path"].read_text()
     assert "Output comparison skipped" in report_text
     assert "Timing comparison" not in report_text
+
+
+@mock_aws
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_runs_the_test_version_even_when_both_versions_are_stored(mock_model_main, tmp_path, capsys):
+    """With OASISLMF_VERSIONS, two stored versions would mean nothing runs at all; the test
+    version runs live regardless, and is compared against the stored baseline.
+    """
+    boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="alpaca-benchmark")
+    published = tmp_path / "published"
+    _write_output_files(published, {"summary.csv": "a,b\n1,2\n"})
+    for version in ("2.5.7", "2.5.8"):
+        upload_baseline("s3://alpaca-benchmark", "PiWind", None, version, published, {"AWS_REGION": "us-east-1"})
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "PiWind-2.5.8", {"summary.csv": "a,b\n1,2\n"})
+    config_path = _write_config(tmp_path, {
+        "AWS_REGION": "us-east-1", "BENCHMARK_BUCKET": "s3://alpaca-benchmark", "RESULT_DIRECTORY": str(results_dir),
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+    })
+
+    output = main(config_path)
+
+    assert [call.args[0]["OASISLMF_VERSION"] for call in mock_model_main.call_args_list] == ["2.5.8"]
+    assert [r["version"] for r in output["results"]] == ["2.5.7 (S3 baseline)", "2.5.8"]
+    assert _group_for(output, "PiWind")["report"]["status"] == "pass"
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_raises_on_half_a_version_pair_before_running_anything(mock_model_main, tmp_path):
+    config_path = _write_config(tmp_path, {"OASISLMF_VERSIONS": [], "OASISLMF_TEST_VERSION": "2.5.8"})
+
+    with pytest.raises(OasisAlpacaConfigError, match="must be set together"):
+        main(config_path)
+    mock_model_main.assert_not_called()

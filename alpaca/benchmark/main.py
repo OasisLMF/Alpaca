@@ -1,4 +1,6 @@
-from alpaca.benchmark.utils import REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_tests_config
+from alpaca.benchmark.utils import (
+    REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_tests_config, validate_version_pair_config
+)
 from alpaca.benchmark.scripts import (
     LIVE_SOURCE, STORED_SOURCE, build_benchmark_plan, build_benchmark_targets, format_benchmark_plan, group_name
 )
@@ -50,6 +52,7 @@ def main(config_file):
     relative_tolerance = resolve_relative_tolerance(config)
     validate_s3_baseline_config(config)
     validate_tests_config(config)
+    validate_version_pair_config(config)
 
     targets = build_benchmark_targets(config, resolve_stored_versions(config))
     plan = build_benchmark_plan(config, targets)

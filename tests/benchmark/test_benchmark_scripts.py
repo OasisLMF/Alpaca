@@ -1,5 +1,6 @@
 from alpaca.benchmark.scripts import (
-    LIVE_SOURCE, STORED_SOURCE, benchmark_locations, benchmark_tests, build_benchmark_plan, build_benchmark_targets,
+    LIVE_SOURCE, STORED_SOURCE, benchmark_locations, benchmark_tests, benchmark_versions, build_benchmark_plan,
+    build_benchmark_targets,
     format_benchmark_plan, group_name, model_name_from_location, oasislmf_sources, resolve_execution_mode,
     oasislmf_json_path
 )
@@ -83,7 +84,7 @@ def test_oasislmf_sources_raises_when_nothing_is_pinned():
     """Nothing to install is a config error, not a quiet run against whatever PyPI's latest
     release happens to be that day.
     """
-    with pytest.raises(OasisAlpacaConfigError):
+    with pytest.raises(OasisAlpacaConfigError, match="OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION"):
         oasislmf_sources({})
 
 
@@ -100,6 +101,26 @@ def test_oasislmf_sources_ignores_blank_entries():
 def test_oasislmf_sources_raises_when_every_entry_is_blank():
     with pytest.raises(OasisAlpacaConfigError):
         oasislmf_sources({"OASISLMF_VERSIONS": [""]})
+
+
+def test_benchmark_versions_lists_oasislmf_versions():
+    assert benchmark_versions({"OASISLMF_VERSIONS": ["2.5.6", "", "2.5.7"]}) == ["2.5.6", "2.5.7"]
+
+
+def test_benchmark_versions_lists_the_baseline_then_the_test_version():
+    config = {"OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8"}
+
+    assert benchmark_versions(config) == ["2.5.7", "2.5.8"]
+
+
+def test_benchmark_versions_returns_empty_when_nothing_is_set():
+    assert benchmark_versions({}) == []
+
+
+def test_oasislmf_sources_lists_the_baseline_and_test_versions_then_branches():
+    config = {"OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8", "OASISLMF_BRANCHES": ["main"]}
+
+    assert oasislmf_sources(config) == [(None, "2.5.7"), (None, "2.5.8"), ("main", None)]
 
 
 def test_resolve_execution_mode_defaults_to_parallel():

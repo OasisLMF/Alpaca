@@ -3,7 +3,7 @@ from alpaca.inputs import (
     AMI_ID, SECURITY_GROUP_ID, SUBNET_ID, IAM_INSTANCE_PROFILE, REPO_LOCATIONS, PATH_TO_OASISLMF_JSON, AWS_REGION,
     BENCHMARK_BUCKET, COMPARISON_TOLERANCE, OASISLMF_VERSIONS, OASISLMF_BRANCHES, INSTANCE_TYPE, DISK_GB, LOG_LEVEL,
     EC2_NAME, EXECUTION_MODE, MAX_LIFETIME_HOURS, PUBLISH_BASELINE, SSH_MAX_RETRIES, AWS_PROFILE, DEBUG,
-    RESULT_DIRECTORY, TESTS
+    RESULT_DIRECTORY, TESTS, OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION
 )
 
 
@@ -13,7 +13,7 @@ REQUIRED_CONFIG_BENCHMARK = [
 OPTIONAL_CONFIG_BENCHMARK = [
     AWS_REGION, BENCHMARK_BUCKET, COMPARISON_TOLERANCE, OASISLMF_VERSIONS, OASISLMF_BRANCHES, INSTANCE_TYPE,
     DISK_GB, LOG_LEVEL, EC2_NAME, EXECUTION_MODE, MAX_LIFETIME_HOURS, PATH_TO_OASISLMF_JSON, PUBLISH_BASELINE,
-    SSH_MAX_RETRIES, AWS_PROFILE, DEBUG, RESULT_DIRECTORY, TESTS
+    SSH_MAX_RETRIES, AWS_PROFILE, DEBUG, RESULT_DIRECTORY, TESTS, OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION
 ]
 
 
@@ -42,3 +42,33 @@ def validate_tests_config(config):
             raise OasisAlpacaConfigError(
                 f"Every TESTS entry must be a directory name under tests/ (e.g. 'test_1'), got '{test}'"
             )
+
+
+def validate_version_pair_config(config):
+    """Validate OASISLMF_BASELINE_VERSION/OASISLMF_TEST_VERSION combinations before any EC2 spend.
+
+    The pair is an alternative to OASISLMF_VERSIONS that guarantees something is run: the
+    baseline version is reused from BENCHMARK_BUCKET when stored there, but the test version
+    always runs live (see alpaca.benchmark.s3_baseline.resolve_stored_versions). Half a pair
+    has nothing to compare against, and mixing it with OASISLMF_VERSIONS would leave it
+    unclear which versions are baselines, so both are rejected rather than guessed at.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Raises:
+        OasisAlpacaConfigError: If only one of the pair is set, if the pair is set alongside
+            OASISLMF_VERSIONS, or if both name the same version.
+    """
+    baseline = config.get("OASISLMF_BASELINE_VERSION")
+    test = config.get("OASISLMF_TEST_VERSION")
+    if not baseline and not test:
+        return
+    if not baseline or not test:
+        raise OasisAlpacaConfigError("OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION must be set together")
+    if config.get("OASISLMF_VERSIONS"):
+        raise OasisAlpacaConfigError(
+            "Set either OASISLMF_VERSIONS or OASISLMF_BASELINE_VERSION/OASISLMF_TEST_VERSION, not both"
+        )
+    if baseline == test:
+        raise OasisAlpacaConfigError(f"OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION are both '{baseline}'")
