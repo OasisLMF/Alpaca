@@ -1,4 +1,5 @@
 from alpaca.benchmark.comparison import find_output_dir
+from alpaca.benchmark.manifest import MANIFEST_FILENAME
 from alpaca.benchmark.scripts import (
     benchmark_locations, benchmark_tests, benchmark_versions, group_name, model_name_from_location
 )
@@ -162,6 +163,10 @@ def _baseline_exists(client, bucket_uri, model, test, version):
 def upload_baseline(bucket_uri, model, test, version, result_directory, config):
     """Publish a benchmark target's output and performance data as a model/test/version's baseline.
 
+    The performance data is the run's result.txt and, when there is one, its manifest.json
+    (see alpaca.benchmark.manifest), so a later benchmark reusing the baseline can check it
+    ran under the same conditions.
+
     Args:
         bucket_uri: S3 bucket URI (e.g. 's3://alpaca-benchmark') to publish under.
         model: Short model name this run's results represent, see model_name_from_location.
@@ -194,13 +199,19 @@ def upload_baseline(bucket_uri, model, test, version, result_directory, config):
         client.upload_file(str(result_file), bucket, f"{prefix}/performance/{PERFORMANCE_RESULT_FILENAME}")
         logger.info(f"Published {name} {version} performance metrics to s3://{bucket}/{prefix}/performance")
 
+    manifest_file = Path(result_directory) / MANIFEST_FILENAME
+    if manifest_file.is_file():
+        client.upload_file(str(manifest_file), bucket, f"{prefix}/performance/{MANIFEST_FILENAME}")
+        logger.info(f"Published {name} {version} manifest to s3://{bucket}/{prefix}/performance")
+
 
 def download_baseline(bucket_uri, model, test, version, local_directory, config):
     """Download a model/test/version's stored baseline output and performance data locally.
 
     Downloads into a shape identical to a normal run's downloaded result directory
-    (local_directory/output/*, local_directory/result.txt), so find_output_dir,
-    find_result_file and resolve_model_runtime all work on it unmodified.
+    (local_directory/output/*, local_directory/result.txt and, when one was published,
+    local_directory/manifest.json), so find_output_dir, find_result_file,
+    resolve_model_runtime and read_manifest all work on it unmodified.
 
     Args:
         bucket_uri: S3 bucket URI the baseline is stored under.
@@ -243,5 +254,10 @@ def download_baseline(bucket_uri, model, test, version, local_directory, config)
         )
     except ClientError:
         logger.warning(f"No stored performance metrics found at s3://{bucket}/{prefix}/performance/")
+
+    try:
+        client.download_file(bucket, f"{prefix}/performance/{MANIFEST_FILENAME}", str(local_directory / MANIFEST_FILENAME))
+    except ClientError:
+        logger.info(f"No stored manifest found at s3://{bucket}/{prefix}/performance/ (published before manifests existed)")
 
     return local_directory

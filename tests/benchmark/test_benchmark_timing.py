@@ -300,3 +300,15 @@ def test_format_timing_table_does_not_green_a_missing_value(in_green):
 
 def test_format_timing_table_returns_empty_string_for_no_rows():
     assert format_timing_table(["2.4.9"], []) == ""
+
+
+def test_format_timing_table_shows_signed_changes_against_a_reference_column():
+    """Against a baseline, a faster run gets a negative change and the baseline itself none."""
+    runs = [("baseline", {"step": 200.0}), ("test", {"step": 150.0}), ("branch", {"step": 250.0})]
+
+    table = format_timing_table([name for name, _ in runs], build_timing_table(runs), reference_index=0)
+    row = table.splitlines()[2]
+
+    assert "200.00" in row and "200.00 (" not in row
+    assert "150.00 (-25.0%)" in row
+    assert "250.00 (+25.0%)" in row

@@ -1,4 +1,5 @@
 from alpaca.model.main import main as model_main
+from alpaca.benchmark.manifest import write_manifest
 from alpaca.benchmark.scripts import group_name
 from alpaca.benchmark.timing import resolve_model_runtime
 from alpaca.logging_context import log_target
@@ -23,7 +24,9 @@ def _run_target(run_config_entry):
     with the wall-clock kept separately as 'total_runtime_seconds'. Every log line emitted
     during the call (including from other modules, e.g. alpaca.remote_controller) is tagged
     with this target's model/test/version via log_target, so concurrent targets' interleaved
-    console output is distinguishable (see alpaca.logging_context.TargetFilter).
+    console output is distinguishable (see alpaca.logging_context.TargetFilter). Whether the
+    run worked or not, a manifest.json describing its instance and input checksums is saved
+    next to its results (see alpaca.benchmark.manifest), so it can be checked for like for like.
 
     Args:
         run_config_entry: One entry as returned by build_benchmark_targets, with 'label',
@@ -48,6 +51,10 @@ def _run_target(run_config_entry):
         except Exception:
             status = "failed"
             logger.exception(f"Benchmark target '{run_config_entry['label']}' failed")
+        try:
+            write_manifest(run_config_entry, run_config_entry["run_config"]["RESULT_DIRECTORY"])
+        except Exception:
+            logger.exception(f"Could not write the manifest for benchmark target '{run_config_entry['label']}'")
     total_runtime_seconds = round(time.monotonic() - start)
 
     runtime_seconds, step_timings = total_runtime_seconds, {}

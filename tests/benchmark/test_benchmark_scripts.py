@@ -417,7 +417,7 @@ def test_build_benchmark_plan_labels_stored_targets_distinctly():
     targets = build_benchmark_targets(BASE_BENCHMARK_CONFIG, stored_versions={("PiWind", None, "2.4.9")})
     plan = build_benchmark_plan(BASE_BENCHMARK_CONFIG, targets)
 
-    assert plan["targets"] == ["PiWind: OasisLMF 2.3.3", "PiWind: OasisLMF 2.4.9 (S3 baseline)"]
+    assert plan["targets"] == ["PiWind: OasisLMF 2.3.3", "PiWind: OasisLMF 2.4.9 (from S3)"]
 
 
 def test_build_benchmark_plan_respects_configured_execution_mode():

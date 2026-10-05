@@ -1,4 +1,5 @@
 from alpaca.benchmark.main import main
+from alpaca.benchmark.report import run_name
 from alpaca.benchmark.s3_baseline import upload_baseline
 from alpaca.exceptions import OasisAlpacaConfigError
 from moto import mock_aws
@@ -63,10 +64,12 @@ def test_main_returns_structured_results_for_every_target(mock_model_main, mock_
         {
             "label": "PiWind-2.3.3", "model": "PiWind", "test": None, "version": "2.3.3", "status": "success",
             "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "source": "live", "is_baseline": False,
         },
         {
             "label": "PiWind-2.4.9", "model": "PiWind", "test": None, "version": "2.4.9", "status": "success",
             "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "source": "live", "is_baseline": False,
         },
     ]
 
@@ -378,7 +381,7 @@ def test_main_takes_a_stored_version_from_the_bucket_instead_of_running_it(
     assert mock_download_baseline.call_args.args[3] == "2.5.4"
     mock_upload_baseline.assert_not_called()
     assert _group_for(output, "PiWind")["report"]["status"] == "pass"
-    assert [r["version"] for r in output["results"]] == ["2.5.6", "2.5.4 (S3 baseline)"]
+    assert [run_name(r) for r in output["results"]] == ["PiWind 2.5.6", "PiWind 2.5.4 (from S3)"]
     assert "PASS:\nOutputs identical" in capsys.readouterr().out
 
 
@@ -415,9 +418,9 @@ def test_main_times_a_stored_target_from_its_published_metrics(
     stored_result = output["results"][1]
     assert stored_result["runtime_seconds"] == 166
     assert stored_result["step_timings"] == {"oasislmf.manager.interface": 165.75}
-    assert _group_for(output, "PiWind")["report"]["reference"] == "PiWind 2.5.4 (S3 baseline)"
+    assert _group_for(output, "PiWind")["report"]["reference"] == "PiWind 2.5.4 (from S3)"
     report_text = output["report_path"].read_text()
-    assert "- PiWind 2.5.4 (S3 baseline): success (166s)" in report_text
+    assert "- PiWind 2.5.4 (from S3): success (166s)" in report_text
     assert "210.50 (+27.0%)" in report_text
 
 
@@ -448,7 +451,7 @@ def test_main_compares_stored_targets_that_have_no_runtimes(
         output = main(config_path)
 
     report = _group_for(output, "PiWind")["report"]
-    assert report["reference"] == "PiWind 2.5.6 (S3 baseline)"
+    assert report["reference"] == "PiWind 2.5.6 (from S3)"
     assert report["status"] == "pass"
     assert "No target reported a runtime" in caplog.text
 
@@ -463,7 +466,7 @@ def test_main_runs_nothing_when_the_only_version_is_already_stored(
     there's no run and nothing to compare it against.
     """
     mock_resolve_stored.return_value = {("PiWind", None, "2.5.6")}
-    mock_download_baseline.side_effect = lambda bucket, model, version, local_directory, config: Path(local_directory)
+    mock_download_baseline.side_effect = lambda bucket, model, test, version, local_directory, config: Path(local_directory)
     config_path = _write_config(tmp_path, {
         "OASISLMF_VERSIONS": ["2.5.6"], "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
     })
@@ -471,7 +474,7 @@ def test_main_runs_nothing_when_the_only_version_is_already_stored(
     output = main(config_path)
 
     mock_model_main.assert_not_called()
-    assert [r["version"] for r in output["results"]] == ["2.5.6 (S3 baseline)"]
+    assert [run_name(r) for r in output["results"]] == ["PiWind 2.5.6 (from S3)"]
     assert "only one target for this group" in capsys.readouterr().out
 
 
@@ -502,7 +505,7 @@ def test_main_runs_nothing_when_every_version_is_already_stored(
 
     mock_model_main.assert_not_called()
     assert mock_download_baseline.call_count == 2
-    assert [r["version"] for r in output["results"]] == ["2.5.6 (S3 baseline)", "2.5.4 (S3 baseline)"]
+    assert [run_name(r) for r in output["results"]] == ["PiWind 2.5.6 (from S3)", "PiWind 2.5.4 (from S3)"]
 
 
 @mock.patch("alpaca.benchmark.main.download_baseline")
@@ -534,7 +537,7 @@ def test_main_reports_a_stored_target_with_no_recorded_runtime(
     stored_result = output["results"][1]
     assert stored_result["runtime_seconds"] is None
     assert _group_for(output, "PiWind")["report"]["reference"] == "PiWind 2.5.6"
-    assert "- PiWind 2.5.4 (S3 baseline): success (runtime unknown)" in output["report_path"].read_text()
+    assert "- PiWind 2.5.4 (from S3): success (runtime unknown)" in output["report_path"].read_text()
 
 
 @mock.patch("alpaca.benchmark.main.upload_baseline")
@@ -548,7 +551,7 @@ def test_main_does_not_republish_a_stored_target(
     pointless, and would overwrite it with itself.
     """
     mock_resolve_stored.return_value = {("PiWind", None, "2.5.4")}
-    mock_download_baseline.side_effect = lambda bucket, model, version, local_directory, config: Path(local_directory)
+    mock_download_baseline.side_effect = lambda bucket, model, test, version, local_directory, config: Path(local_directory)
     config_path = _write_config(tmp_path, {
         "OASISLMF_VERSIONS": ["2.5.6", "2.5.4"],
         "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
@@ -876,7 +879,7 @@ def test_main_runs_the_test_version_even_when_both_versions_are_stored(mock_mode
     output = main(config_path)
 
     assert [call.args[0]["OASISLMF_VERSION"] for call in mock_model_main.call_args_list] == ["2.5.8"]
-    assert [r["version"] for r in output["results"]] == ["2.5.7 (S3 baseline)", "2.5.8"]
+    assert [run_name(r) for r in output["results"]] == ["PiWind 2.5.7 (baseline, from S3)", "PiWind 2.5.8"]
     assert _group_for(output, "PiWind")["report"]["status"] == "pass"
 
 
@@ -887,3 +890,88 @@ def test_main_raises_on_half_a_version_pair_before_running_anything(mock_model_m
     with pytest.raises(OasisAlpacaConfigError, match="must be set together"):
         main(config_path)
     mock_model_main.assert_not_called()
+
+
+def _pair_config(tmp_path, results_dir, overrides=None):
+    return _write_config(tmp_path, {
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+        "RESULT_DIRECTORY": str(results_dir), **(overrides or {}),
+    })
+
+
+def _fake_run(results_dir, runtimes, outputs=None):
+    """Stand in for model_main: write each version's output and result.txt like a real run."""
+    def run(run_config):
+        version = run_config.get("OASISLMF_VERSION") or run_config.get("OASISLMF_BRANCH")
+        directory = Path(run_config["RESULT_DIRECTORY"])
+        _write_output_files(directory, {"summary.csv": (outputs or {}).get(version, "a,b\n1,2\n")})
+        (directory / "result.txt").write_text(f"COMPLETED: oasislmf.manager.interface in {runtimes[version]}s\n")
+    return run
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_compares_against_the_baseline_even_when_the_test_version_is_faster(mock_model_main, tmp_path, capsys):
+    results_dir = tmp_path / "results"
+    mock_model_main.side_effect = _fake_run(results_dir, {"2.5.7": 200, "2.5.8": 150})
+
+    output = main(_pair_config(tmp_path, results_dir))
+
+    group = _group_for(output, "PiWind")
+    assert group["report"]["reference"] == "PiWind 2.5.7 (baseline)"
+    assert [c["target"] for c in group["report"]["comparisons"]] == ["PiWind 2.5.8"]
+    report_text = output["report_path"].read_text()
+    assert "- PiWind 2.5.8: success (150s, -25.0% vs baseline)" in report_text
+    assert "Output comparison against PiWind 2.5.7 (baseline):" in report_text
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_still_uses_the_fastest_as_reference_without_a_baseline(mock_model_main, tmp_path):
+    results_dir = tmp_path / "results"
+    mock_model_main.side_effect = _fake_run(results_dir, {"2.5.7": 200, "2.5.8": 150})
+
+    output = main(_write_config(tmp_path, {"OASISLMF_VERSIONS": ["2.5.7", "2.5.8"], "RESULT_DIRECTORY": str(results_dir)}))
+
+    assert _group_for(output, "PiWind")["report"]["reference"] == "PiWind 2.5.8"
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_skips_comparison_when_the_baseline_fails(mock_model_main, tmp_path):
+    """Comparing the test version against anything but the baseline would answer the wrong question."""
+    results_dir = tmp_path / "results"
+    succeed = _fake_run(results_dir, {"2.5.8": 150, "main": 160})
+
+    def run(run_config):
+        if run_config.get("OASISLMF_VERSION") == "2.5.7":
+            raise RuntimeError("baseline broke")
+        succeed(run_config)
+
+    mock_model_main.side_effect = run
+
+    output = main(_pair_config(tmp_path, results_dir, {"OASISLMF_BRANCHES": ["main"]}))
+
+    group = _group_for(output, "PiWind")
+    assert group["report"] is None
+    assert group["skip_reason"] == "the baseline, PiWind 2.5.7 (baseline), didn't succeed, so there's nothing to compare against"
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_flags_a_run_that_is_not_like_for_like_with_the_baseline(mock_model_main, tmp_path):
+    results_dir = tmp_path / "results"
+    fake = _fake_run(results_dir, {"2.5.7": 200, "2.5.8": 150})
+
+    def run(run_config):
+        fake(run_config)
+        model_settings = "a" * 64 if run_config["OASISLMF_VERSION"] == "2.5.7" else "b" * 64
+        (Path(run_config["RESULT_DIRECTORY"]) / "input_checksums.json").write_text(json.dumps({
+            "oasislmf_json": {"path": "oasislmf.json", "sha256": "c" * 64},
+            "model_settings_json": {"path": "meta-data/model_settings.json", "sha256": model_settings},
+        }))
+
+    mock_model_main.side_effect = run
+
+    output = main(_pair_config(tmp_path, results_dir))
+
+    assert _group_for(output, "PiWind")["manifest_notes"] == {
+        "PiWind 2.5.8": ["model settings changed (meta-data/model_settings.json)"],
+    }
+    assert "- PiWind 2.5.8: not like for like" in output["report_path"].read_text()

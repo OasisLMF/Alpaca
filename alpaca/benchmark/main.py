@@ -5,6 +5,7 @@ from alpaca.benchmark.scripts import (
     LIVE_SOURCE, STORED_SOURCE, build_benchmark_plan, build_benchmark_targets, format_benchmark_plan, group_name
 )
 from alpaca.benchmark.executor import run_benchmark_targets
+from alpaca.benchmark.manifest import manifest_differences, read_manifest
 from alpaca.benchmark.comparison import build_comparison_reports, resolve_relative_tolerance
 from alpaca.benchmark.report import build_report_text, run_name, write_report
 from alpaca.benchmark.s3_baseline import (
@@ -59,6 +60,7 @@ def main(config_file):
     print(format_benchmark_plan(plan))
 
     results = _resolve_targets(config, targets, plan["execution_mode"])
+    _mark_results(config, targets, results)
     if config.get("PUBLISH_BASELINE", False):
         _publish_baselines(config, targets, results)
     comparison_groups = _compare_targets(targets, results, relative_tolerance)
@@ -112,7 +114,7 @@ def _download_stored_target(config, target):
         "label": target["label"],
         "model": target["model"],
         "test": target["test"],
-        "version": f"{target['version']} (S3 baseline)",
+        "version": target["version"],
         "status": "success",
         "runtime_seconds": None,
         "total_runtime_seconds": None,
@@ -135,6 +137,23 @@ def _download_stored_target(config, target):
         "total_runtime_seconds": runtime_seconds,
         "step_timings": step_timings,
     }
+
+
+def _mark_results(config, targets, results):
+    """Record on each result where it came from and whether it's the group's baseline.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+        targets: List of targets as returned by build_benchmark_targets.
+        results: The matching results, in the same order (see _resolve_targets). Each gains
+            'source' (LIVE_SOURCE, or STORED_SOURCE when downloaded from BENCHMARK_BUCKET) and
+            'is_baseline' (True for an OASISLMF_BASELINE_VERSION target, which every other
+            target of its group is then compared against, see _compare_group).
+    """
+    baseline_version = config.get("OASISLMF_BASELINE_VERSION")
+    for target, result in zip(targets, results):
+        result["source"] = target["source"]
+        result["is_baseline"] = bool(baseline_version) and target["run_config"].get("OASISLMF_VERSION") == baseline_version
 
 
 def _group_targets(targets, results):
@@ -165,7 +184,7 @@ def _group_targets(targets, results):
 
 
 def _compare_targets(targets, results, relative_tolerance):
-    """Diff each group's targets' output against the fastest one of that same model and test.
+    """Diff each group's targets' output against its reference: the baseline, or else the fastest.
 
     Args:
         targets: List of targets as returned by build_benchmark_targets.
@@ -173,8 +192,8 @@ def _compare_targets(targets, results, relative_tolerance):
         relative_tolerance: Relative tolerance for numeric CSV cells.
 
     Returns:
-        list[dict]: One {'group', 'report', 'skip_reason'} entry per distinct model and test
-            (see _group_targets for the order), from _compare_group.
+        list[dict]: One {'group', 'report', 'skip_reason', 'manifest_notes'} entry per
+            distinct model and test (see _group_targets for the order), from _compare_group.
     """
     return [
         {"group": name, **_compare_group(pairs, relative_tolerance)}
@@ -183,7 +202,12 @@ def _compare_targets(targets, results, relative_tolerance):
 
 
 def _compare_group(pairs, relative_tolerance):
-    """Diff every successful target's output, within one group, against the fastest one's.
+    """Diff every successful target's output, within one group, against the group's reference.
+
+    The reference is the group's baseline (an OASISLMF_BASELINE_VERSION target, see
+    _mark_results) when it has one, since a baseline/test benchmark asks how the test version
+    differs from the baseline, so the rest follow in config order. Without one, every target is
+    a peer and the fastest is the reference, with the rest quickest first.
 
     Args:
         pairs: List of (target, result) for a single group's targets, in build_benchmark_targets
@@ -191,9 +215,12 @@ def _compare_group(pairs, relative_tolerance):
         relative_tolerance: Relative tolerance for numeric CSV cells.
 
     Returns:
-        dict: {'report': dict or None, 'skip_reason': str}. 'report' is the dict from
-            build_comparison_reports, with the compared targets ordered quickest first to
-            match the report's timing table. Outputs are worth diffing even when nothing can
+        dict: {'report': dict or None, 'skip_reason': str, 'manifest_notes': dict}.
+            'report' is the dict from build_comparison_reports, with the compared targets in
+            the order described above, to match the report's timing table. 'manifest_notes'
+            maps each compared run's name to what keeps it from being like for like with the
+            reference (see alpaca.benchmark.manifest.manifest_differences), empty when there's
+            no reference, and 'reference' names the reference run whenever there is one. Outputs are worth diffing even when nothing can
             be ranked (every target a stored baseline with no recorded runtime, say), so the
             first target stands in as the reference there. 'report' is None when fewer than
             two of this group's targets succeeded, since there's then nothing to compare
@@ -203,21 +230,39 @@ def _compare_group(pairs, relative_tolerance):
             than raised.
     """
     successful = [(target, result) for target, result in pairs if result["status"] == "success"]
+    baseline = next((pair for pair in pairs if pair[1].get("is_baseline")), None)
+    if baseline is not None and baseline[1]["status"] != "success" and len(pairs) > 1:
+        skip_reason = f"the baseline, {run_name(baseline[1])}, didn't succeed, so there's nothing to compare against"
+        logger.warning(f"Skipping result comparison: {skip_reason}")
+        return {"report": None, "skip_reason": skip_reason, "manifest_notes": {}}
     if len(successful) < 2:
         if len(pairs) < 2:
             skip_reason = "only one target for this group (add OASISLMF_VERSIONS or OASISLMF_BRANCHES entries)"
         else:
             skip_reason = "fewer than two of this group's targets succeeded"
         logger.warning(f"Skipping result comparison: {skip_reason}")
-        return {"report": None, "skip_reason": skip_reason}
+        return {"report": None, "skip_reason": skip_reason, "manifest_notes": {}}
 
-    reference_result = fastest_result([result for _, result in successful])
-    if reference_result is None:
-        logger.warning("No target reported a runtime, so the first one is compared against instead of the quickest")
-        reference_result = successful[0][1]
-    reference = next(pair for pair in successful if pair[1] is reference_result)
-    by_speed = {result["label"]: index for index, result in enumerate(sort_results_by_speed([r for _, r in successful]))}
-    compared = sorted((pair for pair in successful if pair is not reference), key=lambda pair: by_speed[pair[1]["label"]])
+    if baseline is not None:
+        reference = baseline
+        compared = [pair for pair in successful if pair[1] is not reference[1]]
+    else:
+        reference_result = fastest_result([result for _, result in successful])
+        if reference_result is None:
+            logger.warning("No target reported a runtime, so the first one is compared against instead of the quickest")
+            reference_result = successful[0][1]
+        reference = next(pair for pair in successful if pair[1] is reference_result)
+        by_speed = {result["label"]: index for index, result in enumerate(sort_results_by_speed([r for _, r in successful]))}
+        compared = sorted((pair for pair in successful if pair is not reference), key=lambda pair: by_speed[pair[1]["label"]])
+
+    reference_manifest = read_manifest(reference[0]["run_config"]["RESULT_DIRECTORY"])
+    manifest_notes = {
+        run_name(result): manifest_differences(
+            reference_manifest, read_manifest(target["run_config"]["RESULT_DIRECTORY"]),
+            run_name(reference[1]), run_name(result),
+        )
+        for target, result in compared
+    }
 
     try:
         report = build_comparison_reports(
@@ -227,8 +272,9 @@ def _compare_group(pairs, relative_tolerance):
         )
     except OasisAlpacaError as error:
         logger.warning(f"Skipping result comparison: {error}")
-        return {"report": None, "skip_reason": str(error)}
-    return {"report": report, "skip_reason": ""}
+        return {"report": None, "skip_reason": str(error), "manifest_notes": manifest_notes,
+                "reference": run_name(reference[1])}
+    return {"report": report, "skip_reason": "", "manifest_notes": manifest_notes, "reference": run_name(reference[1])}
 
 
 def _publish_baselines(config, targets, results):

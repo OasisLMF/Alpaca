@@ -3,6 +3,7 @@ from alpaca.logging_context import TargetFilter
 
 from unittest import mock
 
+import json
 import logging
 import threading
 import time
@@ -199,3 +200,22 @@ def test_run_benchmark_targets_parallel_caps_concurrency(mock_model_main, tmp_pa
 
     assert concurrency["max"] == 2
     assert [result["label"] for result in results] == [f"target-{index}" for index in range(5)]
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_run_benchmark_targets_writes_a_manifest_for_every_run(mock_model_main, tmp_path):
+    run_configs = [_entry("first", tmp_path / "first")]
+    run_configs[0]["run_config"]["INSTANCE_TYPE"] = "m5.xlarge"
+
+    run_benchmark_targets(run_configs, "sequential")
+
+    manifest = json.loads((tmp_path / "first" / "manifest.json").read_text())
+    assert manifest["instance_type"] == "m5.xlarge"
+
+
+@mock.patch("alpaca.benchmark.executor.model_main", side_effect=RuntimeError("boom"))
+def test_run_benchmark_targets_writes_a_manifest_for_a_failed_run_too(mock_model_main, tmp_path):
+    """A failed run's manifest is what shows which of its inputs were missing or changed."""
+    run_benchmark_targets([_entry("failed", tmp_path / "failed")], "sequential")
+
+    assert (tmp_path / "failed" / "manifest.json").is_file()

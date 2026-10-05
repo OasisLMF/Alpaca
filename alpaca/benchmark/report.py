@@ -1,6 +1,8 @@
-from alpaca.benchmark.timing import build_timing_table, fastest_result, format_timing_table, green, sort_results_by_speed
+from alpaca.benchmark.timing import (
+    MODEL_RUNTIME_STEP, build_timing_table, fastest_result, format_timing_table, green, sort_results_by_speed
+)
 from alpaca.benchmark.comparison import format_comparison_reports
-from alpaca.benchmark.scripts import group_name
+from alpaca.benchmark.scripts import STORED_SOURCE, group_name
 from pathlib import Path
 
 REPORT_FILENAME = "benchmark_report.txt"
@@ -14,9 +16,18 @@ def run_name(result):
 
     Returns:
         str: '{model} {version}', e.g. 'PiWind 2.5.6', or '{model} {test} {version}' (e.g.
-            'PiWind test_1 2.5.6') when the run is one of a TESTS benchmark's.
+            'PiWind test_1 2.5.6') when the run is one of a TESTS benchmark's, followed by
+            '(baseline)' for the run the others are compared against (see
+            alpaca.benchmark.main._mark_results) and '(from S3)' for one downloaded from
+            BENCHMARK_BUCKET rather than run, e.g. 'PiWind 2.5.6 (baseline, from S3)'.
     """
-    return f"{group_name(result['model'], result['test'])} {result['version']}"
+    tags = []
+    if result.get("is_baseline"):
+        tags.append("baseline")
+    if result.get("source") == STORED_SOURCE:
+        tags.append("from S3")
+    suffix = f" ({', '.join(tags)})" if tags else ""
+    return f"{group_name(result['model'], result['test'])} {result['version']}{suffix}"
 
 
 def format_runtime(runtime_seconds):
@@ -30,6 +41,47 @@ def format_runtime(runtime_seconds):
         str: e.g. '210s', or 'runtime unknown' when there's no runtime to show.
     """
     return "runtime unknown" if runtime_seconds is None else f"{runtime_seconds}s"
+
+
+def _baseline(group_results):
+    """Find the group's baseline run, the one every other run is compared against, if it has one."""
+    return next((result for result in group_results if result.get("is_baseline")), None)
+
+
+def _ordered(group_results):
+    """Order a group's runs for the report: the baseline then config order, or quickest first."""
+    baseline = _baseline(group_results)
+    if baseline is None:
+        return sort_results_by_speed(group_results)
+    return [baseline, *(result for result in group_results if result is not baseline)]
+
+
+def _runtime_change(result, baseline):
+    """Describe a run's runtime change from the baseline, e.g. '-38.8% vs baseline', or '' when unknown."""
+    if baseline is None or result is baseline or baseline["status"] != "success" or result["status"] != "success":
+        return ""
+    baseline_seconds, result_seconds = _precise_runtime(baseline), _precise_runtime(result)
+    if not baseline_seconds or result_seconds is None:
+        return ""
+    change = (result_seconds - baseline_seconds) / baseline_seconds * 100
+    return f", {change:+.1f}% vs baseline"
+
+
+def _precise_runtime(result):
+    """A run's model runtime before rounding, so its change matches the timing table's."""
+    return result["step_timings"].get(MODEL_RUNTIME_STEP, result["runtime_seconds"])
+
+
+def _format_manifest_notes(reference_name, manifest_notes):
+    """Format the like-for-like check of every compared run against the reference."""
+    lines = [f"Like-for-like check against {reference_name}:"]
+    for name, notes in manifest_notes.items():
+        if notes:
+            lines.append(f"- {name}: not like for like")
+            lines.extend(f"    - {note}" for note in notes)
+        else:
+            lines.append(f"- {name}: same instance type, AMI and inputs")
+    return "\n".join(lines)
 
 
 def _group_results(results):
@@ -57,11 +109,15 @@ def build_report_text(results, comparison_groups, colour=False):
     """Build a single, human-readable report combining every target's timings and,
     where available, their output comparison.
 
-    Every run is a peer within its own group (model and test, see group_name), so each
-    group's section is ordered by speed rather than by config: the run summary lists each
-    group's targets quickest first, and a group's timing table columns run left to right
-    from quickest to slowest, with any run that couldn't be ranked (failed, or a stored
-    baseline with no recorded runtime) last. Comparison - both timing and output - is scoped
+    Without a baseline, every run is a peer within its own group (model and test, see
+    group_name), so each group's section is ordered by speed rather than by config: the run
+    summary lists each group's targets quickest first, and a group's timing table columns run
+    left to right from quickest to slowest, with any run that couldn't be ranked (failed, or a
+    stored baseline with no recorded runtime) last. With one (OASISLMF_BASELINE_VERSION), the
+    baseline comes first and the rest follow in config order, each run summary line and timing
+    cell showing its signed change from the baseline, so a negative change is faster. Either
+    way, each group ends with a like-for-like check of every compared run's instance and inputs
+    against the reference (see alpaca.benchmark.manifest). Comparison - both timing and output - is scoped
     per group (see alpaca.benchmark.main._compare_targets): a group's targets are only ever
     compared against other targets of that *same* model and test (different
     OASISLMF_VERSIONS/BRANCHES of it), never against a different model's or test's targets,
@@ -93,10 +149,11 @@ def build_report_text(results, comparison_groups, colour=False):
 
     lines = ["Benchmark Report", "=" * len("Benchmark Report"), "", "Runs:"]
     for _, group_results in result_groups:
-        ordered = sort_results_by_speed(group_results)
         fastest = fastest_result(group_results)
-        for result in ordered:
-            line = f"- {run_name(result)}: {result['status']} ({format_runtime(result['runtime_seconds'])})"
+        baseline = _baseline(group_results)
+        for result in _ordered(group_results):
+            runtime = f"{format_runtime(result['runtime_seconds'])}{_runtime_change(result, baseline)}"
+            line = f"- {run_name(result)}: {result['status']} ({runtime})"
             lines.append(green(line) if colour and result is fastest else line)
     lines.append("")
 
@@ -109,12 +166,19 @@ def build_report_text(results, comparison_groups, colour=False):
 
         successful = [result for result in group_results if result["status"] == "success"]
         fastest = fastest_result(group_results)
+        baseline = _baseline(group_results)
+        if baseline is not None and baseline["status"] != "success":
+            baseline = None
         if fastest is not None and len(successful) > 1:
-            ordered_successful = [result for result in sort_results_by_speed(group_results) if result["status"] == "success"]
-            section.append("Step timings (quickest run first, left to right):")
+            ordered_successful = [result for result in _ordered(group_results) if result["status"] == "success"]
+            if baseline is not None:
+                section.append("Step timings (change against the baseline, negative is faster):")
+            else:
+                section.append("Step timings (quickest run first, left to right):")
             rows = build_timing_table([(run_name(result), result["step_timings"]) for result in ordered_successful])
             names = [run_name(result) for result in ordered_successful]
-            section.append(format_timing_table(names, rows, colour) if rows else "No timing data available.")
+            reference_index = 0 if baseline is not None else None
+            section.append(format_timing_table(names, rows, colour, reference_index) if rows else "No timing data available.")
             section.append("")
 
         comparison = comparison_by_group.get(name)
@@ -123,6 +187,10 @@ def build_report_text(results, comparison_groups, colour=False):
         else:
             skip_reason = comparison["skip_reason"] if comparison is not None else "no comparison data for this group"
             section.append(f"Output comparison skipped: {skip_reason}.")
+
+        if comparison is not None and comparison.get("manifest_notes"):
+            section.append("")
+            section.append(_format_manifest_notes(comparison["reference"], comparison["manifest_notes"]))
 
         sections.append(section)
 

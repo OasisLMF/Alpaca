@@ -188,8 +188,9 @@ def build_benchmark_plan(config, targets):
     Returns:
         dict: With keys 'models' (each distinct model name under benchmark, see
             model_name_from_location), 'targets' (one '{model}: {install source}' line per
-            target, or '{model} {test}: {install source}' when TESTS is set, marking any
-            target taken from a stored S3 baseline rather than run) and 'execution_mode'.
+            target, or '{model} {test}: {install source}' when TESTS is set, marking the
+            OASISLMF_BASELINE_VERSION target '(baseline)' and any target taken from
+            BENCHMARK_BUCKET rather than run '(from S3)') and 'execution_mode'.
 
     Raises:
         OasisAlpacaConfigError: If EXECUTION_MODE is set to something other than
@@ -201,8 +202,14 @@ def build_benchmark_plan(config, targets):
             models.append(target["model"])
 
     target_lines = []
+    baseline_version = config.get("OASISLMF_BASELINE_VERSION")
     for target in targets:
-        suffix = " (S3 baseline)" if target["source"] == STORED_SOURCE else ""
+        tags = []
+        if baseline_version and target["run_config"].get("OASISLMF_VERSION") == baseline_version:
+            tags.append("baseline")
+        if target["source"] == STORED_SOURCE:
+            tags.append("from S3")
+        suffix = f" ({', '.join(tags)})" if tags else ""
         target_lines.append(f"{group_name(target['model'], target['test'])}: {target['source_label']}{suffix}")
 
     return {"models": models, "targets": target_lines, "execution_mode": resolve_execution_mode(config)}
