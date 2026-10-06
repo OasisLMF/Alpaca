@@ -374,3 +374,66 @@ def test_resolve_stored_versions_ignores_an_untested_baseline_when_tests_are_set
     }
 
     assert resolve_stored_versions(config) == set()
+
+
+@mock_aws
+def test_resolve_stored_versions_never_reuses_the_test_version(tmp_path):
+    """With both versions stored, the baseline is reused but the test version still runs."""
+    bucket = _make_bucket()
+    run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
+    upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.7", run_directory, CONFIG)
+    upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.8", run_directory, CONFIG)
+
+    stored = resolve_stored_versions({
+        **CONFIG, "BENCHMARK_BUCKET": f"s3://{bucket}", "REPO_LOCATIONS": [PIWIND],
+        "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+    })
+
+    assert stored == {("PiWind", None, "2.5.7")}
+
+
+@mock_aws
+def test_resolve_stored_versions_never_reuses_the_test_version_of_any_test(tmp_path):
+    bucket = _make_bucket()
+    run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
+    for test in ("test_1", "test_2"):
+        for version in ("2.5.7", "2.5.8"):
+            upload_baseline(f"s3://{bucket}", "PiWind", test, version, run_directory, CONFIG)
+
+    stored = resolve_stored_versions({
+        **CONFIG, "BENCHMARK_BUCKET": f"s3://{bucket}", "REPO_LOCATIONS": [PIWIND], "TESTS": ["test_1", "test_2"],
+        "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+    })
+
+    assert stored == {("PiWind", "test_1", "2.5.7"), ("PiWind", "test_2", "2.5.7")}
+
+
+def test_validate_passes_when_publishing_the_baseline_and_test_versions():
+    validate_s3_baseline_config({
+        "PUBLISH_BASELINE": "True", "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
+        "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+    })
+
+
+@mock_aws
+def test_upload_then_download_baseline_carries_the_manifest(tmp_path):
+    bucket = _make_bucket()
+    run_directory = _write_run_directory(tmp_path / "run", {"summary.csv": "a,b\n1,2\n"}, "COMPLETED: x in 1s")
+    (run_directory / "manifest.json").write_text('{"instance_type": "m5.xlarge"}')
+
+    upload_baseline(f"s3://{bucket}", "PiWind", "test_1", "2.5.8", run_directory, CONFIG)
+    local_directory = download_baseline(f"s3://{bucket}", "PiWind", "test_1", "2.5.8", tmp_path / "down", CONFIG)
+
+    assert (local_directory / "manifest.json").read_text() == '{"instance_type": "m5.xlarge"}'
+
+
+@mock_aws
+def test_download_baseline_works_for_a_baseline_published_before_manifests(tmp_path):
+    bucket = _make_bucket()
+    run_directory = _write_run_directory(tmp_path / "run", {"summary.csv": "a,b\n1,2\n"}, "COMPLETED: x in 1s")
+    upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.7", run_directory, CONFIG)
+
+    local_directory = download_baseline(f"s3://{bucket}", "PiWind", None, "2.5.7", tmp_path / "down", CONFIG)
+
+    assert not (local_directory / "manifest.json").exists()
+    assert (local_directory / "output" / "summary.csv").is_file()

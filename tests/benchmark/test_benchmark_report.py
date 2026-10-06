@@ -276,3 +276,41 @@ def test_build_report_text_labels_each_test_section_and_run():
     assert "\nPiWind test_2\n-------------\n" in report_text
     assert "- PiWind test_1 2.5.6: success (100s)" in report_text
     assert "- PiWind test_2 2.5.7: success (55s)" in report_text
+
+
+def _baseline_results():
+    baseline = {**_result("PiWind", "2.5.7", "success", 200, {"step": 200.0}), "is_baseline": True, "source": "stored"}
+    test = {**_result("PiWind", "2.5.8", "success", 150, {"step": 150.0}), "is_baseline": False, "source": "live"}
+    return [baseline, test]
+
+
+def test_build_report_text_lists_the_baseline_first_with_signed_changes():
+    """Against a baseline the faster test version is shown as a negative change, not the reference."""
+    text = build_report_text(_baseline_results(), [_group("PiWind", skip_reason="x")])
+
+    assert "- PiWind 2.5.7 (baseline, from S3): success (200s)" in text
+    assert "- PiWind 2.5.8: success (150s, -25.0% vs baseline)" in text
+    assert text.index("PiWind 2.5.7 (baseline, from S3): success") < text.index("PiWind 2.5.8: success")
+    assert "Step timings (change against the baseline, negative is faster):" in text
+    assert "150.00 (-25.0%)" in text
+
+
+def test_build_report_text_reports_the_like_for_like_check():
+    group = {
+        **_group("PiWind", skip_reason="x"), "reference": "PiWind 2.5.7 (baseline, from S3)",
+        "manifest_notes": {"PiWind 2.5.8": ["model settings changed (meta-data/model_settings.json)"]},
+    }
+
+    text = build_report_text(_baseline_results(), [group])
+
+    assert "Like-for-like check against PiWind 2.5.7 (baseline, from S3):" in text
+    assert "- PiWind 2.5.8: not like for like" in text
+    assert "    - model settings changed (meta-data/model_settings.json)" in text
+
+
+def test_build_report_text_says_when_runs_are_like_for_like():
+    group = {**_group("PiWind", skip_reason="x"), "reference": "PiWind 2.5.7", "manifest_notes": {"PiWind 2.5.8": []}}
+
+    text = build_report_text(_baseline_results(), [group])
+
+    assert "- PiWind 2.5.8: same instance type, AMI and inputs" in text

@@ -93,6 +93,23 @@ def group_name(model, test):
     return f"{model} {test}" if test else model
 
 
+def benchmark_versions(config):
+    """List the OasisLMF versions a benchmark compares, in configured order.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Returns:
+        list: [OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION] when that pair is set (see
+            alpaca.benchmark.utils.validate_version_pair_config), otherwise every non-blank
+            OASISLMF_VERSIONS entry.
+    """
+    pair = [config.get("OASISLMF_BASELINE_VERSION"), config.get("OASISLMF_TEST_VERSION")]
+    if any(pair):
+        return [version for version in pair if version]
+    return [version for version in config.get("OASISLMF_VERSIONS") or [] if version]
+
+
 def oasislmf_sources(config):
     """List the OasisLMF installs a benchmark compares, in configured order.
 
@@ -106,14 +123,14 @@ def oasislmf_sources(config):
 
     Returns:
         list[tuple]: One (branch, version) pair per install, where exactly one of the two is
-            set: OASISLMF_VERSIONS entries first, then OASISLMF_BRANCHES entries, without
-            duplicates.
+            set: version entries first (see benchmark_versions), then OASISLMF_BRANCHES
+            entries, without duplicates.
 
     Raises:
-        OasisAlpacaConfigError: If neither OASISLMF_VERSIONS nor OASISLMF_BRANCHES holds an
-            entry.
+        OasisAlpacaConfigError: If there's no version (see benchmark_versions) and no
+            OASISLMF_BRANCHES entry.
     """
-    sources = [(None, version) for version in config.get("OASISLMF_VERSIONS") or [] if version]
+    sources = [(None, version) for version in benchmark_versions(config)]
     sources.extend((branch, None) for branch in config.get("OASISLMF_BRANCHES") or [] if branch)
 
     deduplicated = []
@@ -121,7 +138,10 @@ def oasislmf_sources(config):
         if source not in deduplicated:
             deduplicated.append(source)
     if not deduplicated:
-        raise OasisAlpacaConfigError("OASISLMF_VERSIONS or OASISLMF_BRANCHES must hold at least one entry to benchmark")
+        raise OasisAlpacaConfigError(
+            "Nothing to benchmark: set OASISLMF_VERSIONS, OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION, "
+            "or OASISLMF_BRANCHES"
+        )
     return deduplicated
 
 
@@ -158,18 +178,22 @@ def resolve_execution_mode(config):
     return execution_mode
 
 
-def build_benchmark_plan(config, targets):
+def build_benchmark_plan(config, targets, tests_per_instance="separate"):
     """Build a benchmark plan for display from a validated config and its targets.
 
     Args:
         config: Validated benchmark configuration dictionary.
         targets: List of targets as returned by build_benchmark_targets.
+        tests_per_instance: 'separate' or 'shared' (see TESTS_PER_INSTANCE), which decides how
+            many EC2 instances the targets that run live need.
 
     Returns:
-        dict: With keys 'models' (each distinct model name under benchmark, see
+        dict: With keys 'instances' (how many EC2 instances the live targets will launch),
+            'models' (each distinct model name under benchmark, see
             model_name_from_location), 'targets' (one '{model}: {install source}' line per
-            target, or '{model} {test}: {install source}' when TESTS is set, marking any
-            target taken from a stored S3 baseline rather than run) and 'execution_mode'.
+            target, or '{model} {test}: {install source}' when TESTS is set, marking the
+            OASISLMF_BASELINE_VERSION target '(baseline)' and any target taken from
+            BENCHMARK_BUCKET rather than run '(from S3)') and 'execution_mode'.
 
     Raises:
         OasisAlpacaConfigError: If EXECUTION_MODE is set to something other than
@@ -181,11 +205,25 @@ def build_benchmark_plan(config, targets):
             models.append(target["model"])
 
     target_lines = []
+    baseline_version = config.get("OASISLMF_BASELINE_VERSION")
     for target in targets:
-        suffix = " (S3 baseline)" if target["source"] == STORED_SOURCE else ""
+        tags = []
+        if baseline_version and target["run_config"].get("OASISLMF_VERSION") == baseline_version:
+            tags.append("baseline")
+        if target["source"] == STORED_SOURCE:
+            tags.append("from S3")
+        suffix = f" ({', '.join(tags)})" if tags else ""
         target_lines.append(f"{group_name(target['model'], target['test'])}: {target['source_label']}{suffix}")
 
-    return {"models": models, "targets": target_lines, "execution_mode": resolve_execution_mode(config)}
+    live = [target for target in targets if target["source"] != STORED_SOURCE]
+    instance_keys = {
+        (target["run_config"]["REPO_LOCATION"], target["version"]) if tests_per_instance == "shared" else target["label"]
+        for target in live
+    }
+    return {
+        "models": models, "targets": target_lines, "execution_mode": resolve_execution_mode(config),
+        "instances": len(instance_keys), "tests_per_instance": tests_per_instance,
+    }
 
 
 SHARED_MODEL_CONFIG_KEYS = [
@@ -254,8 +292,8 @@ def build_benchmark_targets(config, stored_versions=()):
             'run_config' (a config dict suitable for alpaca.model.main.main).
 
     Raises:
-        OasisAlpacaConfigError: If REPO_LOCATIONS holds no model to benchmark, or neither
-            OASISLMF_VERSIONS nor OASISLMF_BRANCHES holds an entry (see oasislmf_sources).
+        OasisAlpacaConfigError: If REPO_LOCATIONS holds no model to benchmark, or there's no
+            version or branch to install (see oasislmf_sources).
     """
     locations = benchmark_locations(config)
     if not locations:
@@ -325,4 +363,9 @@ def format_benchmark_plan(plan):
     lines.append("")
     lines.append("Execution mode:")
     lines.append(plan["execution_mode"])
+    if "instances" in plan:
+        lines.append("")
+        lines.append("EC2 instances:")
+        sharing = " (tests share an instance per version)" if plan.get("tests_per_instance") == "shared" else ""
+        lines.append(f"{plan['instances']}{sharing}")
     return "\n".join(lines)

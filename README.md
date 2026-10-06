@@ -148,18 +148,21 @@ loads the config:
 | `MAX_LIFETIME_HOURS` | `2` | all | Written to the instance's `ALPACA_END_TIME` tag |
 | `SSH_MAX_RETRIES` | `60` | all | SSM registration and SSH-over-SSM attempts, three seconds apart |
 | `LOG_LEVEL` | `INFO` | all | Log level for Alpaca, botocore, paramiko and urllib3 (upper case) |
-| `DEBUG` | `False` | all | `True` steps through the run one command at a time |
+| `DEBUG` | `False` | all | `True` steps through the run one command at a time (benchmarks: `sequential` only) |
 | `RESULT_DIRECTORY` | `./runs` | all | Where results go: a local path, or `s3://bucket` to have the instance upload them (a benchmark needs a local path) |
 | `OASISLMF_VERSION` | *(latest)* | model, pytest, api | Released OasisLMF version to pip install |
 | `OASISLMF_BRANCH` | *(none)* | model, pytest, api | OasisLMF branch to install from source; takes priority over `OASISLMF_VERSION` |
 | `PYTEST_ARGS` | *(none)* | pytest | Extra arguments for pytest (`-vv` is always passed) |
 | `OASISLMF_VERSIONS` | `[]` | benchmark | JSON array of versions to benchmark, one target each |
 | `OASISLMF_BRANCHES` | `[]` | benchmark | JSON array of branches to benchmark, one target each |
+| `OASISLMF_BASELINE_VERSION` | *(none)* | benchmark | Version to compare against, reused from `BENCHMARK_BUCKET` when stored; set with `OASISLMF_TEST_VERSION` in place of `OASISLMF_VERSIONS` — see [Baseline and test versions](#baseline-and-test-versions) |
+| `OASISLMF_TEST_VERSION` | *(none)* | benchmark | Version that always runs live, even when stored; set with `OASISLMF_BASELINE_VERSION` |
 | `TESTS` | `[]` | benchmark | JSON array of test names, each run from `tests/<name>/oasislmf.json` — see [Tests](#tests) |
-| `EXECUTION_MODE` | `parallel` | benchmark | `parallel` or `sequential` |
-| `COMPARISON_TOLERANCE` | `1e-6` | benchmark | Relative tolerance for numeric cells when diffing outputs |
+| `TESTS_PER_INSTANCE` | `separate` | benchmark | `separate` gives every test its own instance; `shared` runs a model's tests in turn on one instance per version — see [Sharing an instance between tests](#sharing-an-instance-between-tests) |
+| `EXECUTION_MODE` | `parallel` | benchmark | `parallel` (up to eight instances at once) or `sequential` |
+| `COMPARISON_TOLERANCE` | `0.005` | benchmark | Relative tolerance for numeric cells when diffing outputs (0.005 = 0.5%) |
 | `BENCHMARK_BUCKET` | *(none)* | benchmark | `s3://bucket` holding versioned baseline outputs and metrics |
-| `PUBLISH_BASELINE` | `False` | benchmark | `True` publishes each version target's results to `BENCHMARK_BUCKET` |
+| `PUBLISH_BASELINE` | `False` | benchmark | `True` runs every version live and stores each successful run in `BENCHMARK_BUCKET`, overwriting what's there |
 
 If neither `OASISLMF_VERSION` nor `OASISLMF_BRANCH` is set, the latest OasisLMF release on
 PyPI is installed. `MAX_LIFETIME_HOURS` only records an end time on the instance tag; Alpaca
@@ -219,53 +222,69 @@ stack up (`docker compose up -d --build`, or `bash -e` for a `.sh` deploy script
 alpaca benchmark <path-to-config>
 ```
 
-Every combination of `REPO_LOCATIONS` and `OASISLMF_VERSIONS`/`OASISLMF_BRANCHES` is a
-target, and all of them are peers — there is no designated baseline. At least one model
-location and one version or branch must be configured. Each target runs as an ordinary
-`alpaca model` run on its own instance, named `Alpaca {model} {version}` (e.g.
-`Alpaca PiWind 2.5.4`) so concurrent instances are distinguishable in the AWS console, and
-downloads into its own subfolder of `RESULT_DIRECTORY` (e.g. `./runs/PiWind-2.5.4`).
+A benchmark runs one or more models at several OasisLMF versions (or branches), then compares
+them: how long each step took, and whether the outputs match. Use it to check that a new
+OasisLMF release gives the same results as the last one, and whether it's faster or slower.
 
-`EXECUTION_MODE` decides whether the targets run `parallel` (the default: one thread and one
-instance per target) or `sequential`. Parallel runs up to eight targets at a time, the rest
-waiting for a slot, so a large benchmark doesn't launch dozens of instances at once; mind
-your EC2 limits and spend all the same.
+### How a benchmark runs
 
-Alpaca prints the plan before spending anything, then for each target reads the model's own
-timings out of `result.txt`. The `oasislmf.manager.interface` step is used as the model
-runtime, with the wall-clock time (which includes EC2 startup, upload and download) kept
-alongside it and used as a fallback if the run reported no timings.
+1. **Build the targets.** Every model in `REPO_LOCATIONS` is paired with every version or
+   branch to run (and every test in `TESTS`, if set). Each pairing is one *target*. Alpaca
+   prints the list before it starts anything.
+2. **Reuse stored results.** If `BENCHMARK_BUCKET` is set and a target's results are already
+   stored there, they're downloaded instead of run, marked `(from S3)`.
+3. **Run the rest on EC2.** Each target is an ordinary `alpaca model` run on its own instance,
+   named `Alpaca {model} {version}` (e.g. `Alpaca PiWind 2.5.4`), and its results are
+   downloaded into its own subfolder of `RESULT_DIRECTORY` (e.g. `./runs/PiWind-2.5.4`).
+   With `TESTS_PER_INSTANCE` set to `shared`, a model's tests share one instance instead (see
+   [Sharing an instance between tests](#sharing-an-instance-between-tests)).
+4. **Record each run.** Alpaca reads the timings OasisLMF prints for each step from
+   `result.txt`, and writes a `manifest.json` describing the run (see
+   [Like-for-like check](#like-for-like-check)). A run that failed also gets a `failure.txt`
+   (see [When a run fails](#when-a-run-fails)).
+5. **Compare.** Within each model (and test), every run is compared with one reference run:
+   step timings side by side, and the output files diffed.
+6. **Publish (optional).** With `PUBLISH_BASELINE` on, each successful run is uploaded to
+   `BENCHMARK_BUCKET` so later benchmarks can reuse it.
+7. **Report.** The report is printed and saved as `benchmark_report.txt` in
+   `RESULT_DIRECTORY`. The command exits with status 1 if any run failed or any outputs
+   differed, so a scheduled or CI benchmark doesn't look green when it isn't.
 
-Comparison — both timings and output — is scoped per model (i.e. per `REPO_LOCATIONS`
-entry): within a model's own targets, the fastest successful one becomes the reference the
-rest are compared against, but two different models are never compared against each other,
-since they're expected to produce different output and take a different amount of time —
-that's not a regression, just a different thing.
+Because timings and outputs are read from the downloaded files, `RESULT_DIRECTORY` must be a
+local path for a benchmark, not `s3://`.
 
-* **Timings** are reported per OasisLMF step, one column per target, quickest first within
-  its model, each cell showing how far behind the quickest it was.
-* **Outputs** are diffed file by file in each run's `output` directory. Files are
-  checksummed first, and only on a mismatch are CSVs parsed and compared cell by cell within
-  `COMPARISON_TOLERANCE` — OasisLMF's Monte Carlo sampling means two runs rarely produce
-  byte-identical loss tables. Any other file that differs, or that exists in only one run, is
-  reported as different.
+`EXECUTION_MODE` is `parallel` by default: up to eight instances run at once, the rest
+waiting for a slot. Mind your EC2 limits and spend. `sequential` runs one at a time, and is
+the only mode in which `DEBUG` works (parallel runs switch it off).
 
-The combined report is printed and written to `benchmark_report.txt` next to the target
-result directories: a run summary line per target, then one section per model with its own
-timing table and output comparison. A benchmark spanning only one model (still the most
-common case) reads exactly as before — no redundant model heading, single flat report.
-Comparison for a given model is skipped (with the reason stated in the report) if fewer than
-two of its targets succeeded or a run's `output` directory can't be found — this never holds
-back another model's comparison. A target that fails is reported as failed; the others still
-run and report. Because the timings and comparison are read from local files, a benchmark
-needs a local `RESULT_DIRECTORY` and rejects an `s3://` one before starting anything.
+### Choosing versions
+
+There are two ways to say which OasisLMF versions to run:
+
+* **`OASISLMF_VERSIONS`** (and/or `OASISLMF_BRANCHES`): a list of versions that are all
+  equal peers. The quickest successful run becomes the reference. A version already stored in
+  `BENCHMARK_BUCKET` is downloaded rather than run, so once every listed version is stored, a
+  benchmark has nothing left to run.
+* **`OASISLMF_BASELINE_VERSION` and `OASISLMF_TEST_VERSION`**: one version to compare
+  against and one to test. The baseline is downloaded from `BENCHMARK_BUCKET` when it's
+  stored there (and run live when it isn't). The test version **always** runs live, even if
+  it's stored. The baseline is always the reference, whichever is faster.
+
+```json
+"OASISLMF_BASELINE_VERSION": "2.5.7",
+"OASISLMF_TEST_VERSION": "2.5.8",
+"BENCHMARK_BUCKET": "s3://my-benchmark-bucket"
+```
+
+Set both pair keys or neither, don't combine them with `OASISLMF_VERSIONS`, and don't set
+them to the same version. `OASISLMF_BRANCHES` and `TESTS` work with either style.
 
 ### Tests
 
-`TESTS` runs several tests of one model — typically the same model data with a different
-event set or settings per test — without a bucket or repository per test. Each entry names a
-directory under the model's `tests/`, and that directory's `oasislmf.json` is what the target
-runs, in place of `PATH_TO_OASISLMF_JSON`:
+`TESTS` runs several tests of one model, typically the same model data with a different
+event set or settings per test. Each entry names a directory under the model's `tests/`
+folder, and that directory's `oasislmf.json` is what runs (in place of
+`PATH_TO_OASISLMF_JSON`, which can't be set at the same time):
 
 ```json
 "REPO_LOCATIONS": ["s3://my-bucket/MyModel"],
@@ -273,30 +292,121 @@ runs, in place of `PATH_TO_OASISLMF_JSON`:
 "OASISLMF_VERSIONS": ["2.5.5", "2.5.7"]
 ```
 
-Every model × test × version is its own target: an ordinary `alpaca model` run on its own
-instance (`Alpaca {model} {test} {version}`), downloading into its own
-`RESULT_DIRECTORY` subfolder (e.g. `./runs/MyModel-test_1-2.5.5`). The
-example above runs four instances. Comparison is scoped per model *and* test, so `test_1` at
-2.5.5 is compared with `test_1` at 2.5.7, but never with `test_2`, and the report has one
-section per test. Test names are case-sensitive and must match the directory names exactly.
+Every model × test × version is its own target, so the example above has four. Tests are
+only ever compared with the same test: `test_1` at 2.5.5 against `test_1` at 2.5.7, never
+against `test_2`. The report has one section per test. Test names are case-sensitive and must
+match the directory names exactly.
+
+### Sharing an instance between tests
+
+By default each target gets its own instance. Setting `"TESTS_PER_INSTANCE": "shared"` runs
+all of a model's tests at one OasisLMF version on one instance instead: OasisLMF is installed
+and the model pulled once, then each test runs in turn. The example above would launch 2
+instances rather than 4 (or 1, if both tests at 2.5.5 are already stored in the bucket).
+
+Everything after the run is still per test: each test downloads into its own folder, is
+compared, published and stored on its own, and gets its own manifest. A test that fails
+doesn't stop the ones after it.
+
+So a later test isn't sped up by work an earlier test left behind, Alpaca clears the
+instance's file cache and OasisLMF's compiled-code (Numba) cache before each test. Shared
+runs are still recorded as `shared` in the manifest, and comparing one with a `separate`
+run is flagged in the like-for-like check.
+
+The trade-off is time: shared tests run one after another, so the instance runs for the sum
+of their runtimes. Raise `MAX_LIFETIME_HOURS` if that's long. `shared` needs `TESTS`.
 
 ### Stored S3 baselines
 
-Setting `BENCHMARK_BUCKET` lets a benchmark reuse results instead of paying to re-run them.
-Baselines are stored per model and OasisLMF version as `{model}/{version}/output/*` and
-`{model}/{version}/performance/result.txt` (e.g. `PiWind/2.5.6/output/*`), or per model, test
-and version as `{model}/{test}/{version}/...` when `TESTS` is set (e.g.
-`PiWind/test_1/2.5.6/output/*`). The two are kept apart: a baseline published from
-`PATH_TO_OASISLMF_JSON` is never reused for a test, or the other way round.
+`BENCHMARK_BUCKET` is an S3 bucket of earlier results, so a benchmark can reuse them instead
+of paying to run them again. Each stored run lives under its model and version, plus its test
+when `TESTS` is used:
 
-* Any `REPO_LOCATIONS`/`OASISLMF_VERSIONS` pair already stored in the bucket is downloaded
-  and treated exactly like a run that just finished, rather than being run on EC2. Because
-  baselines are keyed by model, test and version together, this applies independently to
-  every `REPO_LOCATIONS` and `TESTS` entry.
-* `PUBLISH_BASELINE` set to `True` runs every version target live and publishes its output
-  and timings as that model/version's new stored baseline, overwriting anything already
-  there. It requires `BENCHMARK_BUCKET` and at least one `OASISLMF_VERSIONS` entry; branch
-  targets are skipped, having no version to publish under.
+```
+PiWind/2.5.6/output/...                    # from PATH_TO_OASISLMF_JSON
+PiWind/2.5.6/performance/result.txt
+PiWind/2.5.6/performance/manifest.json
+PiWind/test_1/2.5.6/output/...             # from TESTS
+PiWind/test_1/2.5.6/performance/...
+```
+
+A result stored without a test is never reused for a test, or the other way round.
+
+To store results, set `PUBLISH_BASELINE` to `true`. Every version target then runs live
+(nothing is reused), and each one that succeeds is uploaded, **overwriting** whatever was
+stored for that model, test and version. Failed runs and branch targets are never published
+(a branch has no version to store it under). It needs `BENCHMARK_BUCKET` and at least one
+version.
+
+### Reading the report
+
+`benchmark_report.txt` starts with one line per run (status and runtime), then a list of
+any failed runs, then one section per model (and test) containing:
+
+* **Step timings**: one column per run, for every OasisLMF step. With a baseline/test pair,
+  the baseline comes first and every other run shows its change from it, e.g.
+  `212s, +16.3% vs baseline` (negative is faster). With `OASISLMF_VERSIONS`, runs are sorted
+  quickest first and each shows how far behind the quickest it was. The
+  `oasislmf.manager.interface` step is used as the run's runtime.
+* **Output comparison**: each file in the runs' `output` directories is compared with the
+  reference's. Identical files pass straight away. CSVs that differ are compared cell by cell,
+  allowing numbers to differ by up to `COMPARISON_TOLERANCE` (relative, default `0.005`, i.e.
+  0.5%), since sampling means two runs rarely give byte-identical losses. Any other
+  difference, or a file only one run has, is reported.
+* **Like-for-like check**: see below.
+
+A group's comparison is skipped, with the reason given, when its baseline failed or fewer
+than two of its runs succeeded. That never holds back another group.
+
+### Like-for-like check
+
+A timing difference only means something if the runs were set up the same way. Every run
+writes a `manifest.json` next to its results recording:
+
+* the instance type, AMI and region,
+* whether it ran on its own instance or a shared one (`TESTS_PER_INSTANCE`),
+* SHA-256 checksums of the `oasislmf.json` it ran and of the analysis and model settings that
+  file points to, taken on the instance just before the model runs. A file that doesn't exist
+  is recorded as missing.
+
+The manifest is stored with the results when they're published. At the end of each group the
+report names anything that differs from the reference, e.g.
+`instance type differs: t2.xlarge vs m5.xlarge`,
+`model settings changed (meta-data/model_settings.json)` or
+`tests per instance differs: separate vs shared`. Results stored before manifests existed are
+reported as unchecked. A run that isn't like for like is only reported; it doesn't fail the
+command.
+
+### When a run fails
+
+A failed run doesn't stop the others and is never published. Its folder in
+`RESULT_DIRECTORY` gets a `failure.txt` with:
+
+* the stage that failed (instance setup, model run, or downloading results),
+* the error line that matters,
+* any input file its `oasislmf.json` pointed at that doesn't exist,
+* the failed command's full output.
+
+The report lists every failed run before the comparisons:
+
+```
+Failed runs:
+- MyModel test_1 2.5.8: failed during model run
+    The path /home/ubuntu/tests/test_1/oasislmf.json (MDK config. JSON file) is indicated as preexisting but does not exist
+    missing input file: tests/test_1/oasislmf.json
+    details: ./runs/MyModel-test_1-2.5.8/failure.txt
+```
+
+At the very end, the console lists each `failure.txt` and the report's location, so there's
+no need to go looking for them:
+
+```
+Benchmark finished with failures: see the report above.
+Failure details:
+- MyModel test_1 2.5.8: ./runs/MyModel-test_1-2.5.8/failure.txt
+Full report: ./runs/benchmark_report.txt
+Exiting with status 1.
+```
 
 ## Results
 

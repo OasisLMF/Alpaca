@@ -35,8 +35,20 @@ IAM_INSTANCE_PROFILE = (
 INSTANCE_TYPE = ("INSTANCE_TYPE", "Server configuration, amount of resources:", "t3.medium")
 LOG_LEVEL = ("LOG_LEVEL", "Verbosity of logging", "INFO")
 MAX_LIFETIME_HOURS = ("MAX_LIFETIME_HOURS", "Max lifetime of EC2 instance in hours", 2)
+OASISLMF_BASELINE_VERSION = (
+    "OASISLMF_BASELINE_VERSION",
+    "OasisLMF version a benchmark compares OASISLMF_TEST_VERSION against, taken from BENCHMARK_BUCKET when "
+    "already stored there (set both together, in place of OASISLMF_VERSIONS)",
+    ""
+)
 OASISLMF_BRANCH = ("OASISLMF_BRANCH", "Branch of the OasisLMF repo to install from source, used in place of OASISLMF_VERSION", "")
 OASISLMF_BRANCHES = ("OASISLMF_BRANCHES", "JSON array of OasisLMF branches to benchmark, one target each, replaces OASISLMF_BRANCH", [])
+OASISLMF_TEST_VERSION = (
+    "OASISLMF_TEST_VERSION",
+    "OasisLMF version a benchmark always runs live on EC2, even when BENCHMARK_BUCKET already stores it, and "
+    "compares against OASISLMF_BASELINE_VERSION (set both together, in place of OASISLMF_VERSIONS)",
+    ""
+)
 OASISLMF_VERSION = ("OASISLMF_VERSION", "Specific version of OasisLMF to use", "")
 OASISLMF_VERSIONS = ("OASISLMF_VERSIONS", "JSON array of OasisLMF versions to benchmark, one target each, replaces OASISLMF_VERSION", [])
 PATH_TO_DOCKER_COMPOSE = ("PATH_TO_DOCKER_COMPOSE", "Path from base of REPO_LOCATION to docker-compose file (or bash script)",
@@ -62,6 +74,13 @@ RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket
 SECURITY_GROUP_ID = ("SECURITY_GROUP_ID", "Security group id of EC2 instance", "MySecurityGroup")
 SSH_MAX_RETRIES = ("SSH_MAX_RETRIES", "Maximum number of SSH-over-SSM connection attempts before timeout", 60)
 SUBNET_ID = ("SUBNET_ID", "Subnet id of EC2 instance", "MySubnetID")
+TESTS_PER_INSTANCE = (
+    "TESTS_PER_INSTANCE",
+    "How a benchmark's TESTS share EC2 instances: 'separate' (the default) runs every test on its own "
+    "instance, 'shared' runs all of a model's tests at one OasisLMF version in turn on one instance, "
+    "installing OasisLMF and pulling the model only once",
+    "separate"
+)
 TESTS = (
     "TESTS",
     "JSON array of test names to benchmark (benchmark mode), each run from tests/<name>/oasislmf.json in every "

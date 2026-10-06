@@ -146,7 +146,7 @@ def build_timing_table(runs):
     return rows
 
 
-def format_timing_table(names, rows, colour=False):
+def format_timing_table(names, rows, colour=False, reference_index=None):
     """Format a timing table as a human-readable, aligned table.
 
     Args:
@@ -154,26 +154,35 @@ def format_timing_table(names, rows, colour=False):
         rows: list of dicts as returned by build_timing_table.
         colour: Whether to highlight the quickest run of each step in green. Left off for
             the report file, which is read as plain text.
+        reference_index: Index of the run every other run's change is shown against (a
+            baseline). Defaults to comparing each step against its quickest run.
 
     Returns:
         str: A table with one row per step and one column per run, each cell showing that
-            run's duration and, unless it was the quickest, how far behind the quickest it
-            was ('n/a' where a step is missing from a run). Empty string if rows is empty.
+            run's duration and, unless it is the run being compared against, its signed
+            change from that run, so a negative change is faster ('n/a' where a step is
+            missing from a run). Empty string if rows is empty.
     """
     if not rows:
         return ""
 
     headers = ["Step", *names]
 
-    def format_cell(value, fastest_seconds):
+    def format_cell(value, compared_seconds, is_reference=False):
         if value is None:
             return "n/a"
-        if fastest_seconds in (None, 0) or value == fastest_seconds:
+        if is_reference or compared_seconds in (None, 0) or value == compared_seconds:
             return f"{value:.2f}"
-        return f"{value:.2f} ({(value - fastest_seconds) / fastest_seconds * 100:+.1f}%)"
+        return f"{value:.2f} ({(value - compared_seconds) / compared_seconds * 100:+.1f}%)"
+
+    def compared_seconds(row):
+        return row["fastest_seconds"] if reference_index is None else row["seconds"][reference_index]
 
     table_rows = [
-        [row["step"], *(format_cell(value, row["fastest_seconds"]) for value in row["seconds"])]
+        [row["step"], *(
+            format_cell(value, compared_seconds(row), index == reference_index)
+            for index, value in enumerate(row["seconds"])
+        )]
         for row in rows
     ]
 
