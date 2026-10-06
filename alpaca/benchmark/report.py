@@ -157,6 +157,18 @@ def build_report_text(results, comparison_groups, colour=False):
             lines.append(green(line) if colour and result is fastest else line)
     lines.append("")
 
+    failed = [result for result in results if result["status"] != "success" and result.get("failure")]
+    if failed:
+        lines.append("Failed runs:")
+        for result in failed:
+            failure = result["failure"]
+            lines.append(f"- {run_name(result)}: failed during {failure['stage']}")
+            lines.append(f"    {failure['message']}")
+            lines.extend(f"    missing input file: {path}" for path in failure.get("missing_inputs") or [])
+            if failure.get("details"):
+                lines.append(f"    details: {failure['details']}")
+        lines.append("")
+
     sections = []
     for name, group_results in result_groups:
         section = []

@@ -178,15 +178,18 @@ def resolve_execution_mode(config):
     return execution_mode
 
 
-def build_benchmark_plan(config, targets):
+def build_benchmark_plan(config, targets, tests_per_instance="separate"):
     """Build a benchmark plan for display from a validated config and its targets.
 
     Args:
         config: Validated benchmark configuration dictionary.
         targets: List of targets as returned by build_benchmark_targets.
+        tests_per_instance: 'separate' or 'shared' (see TESTS_PER_INSTANCE), which decides how
+            many EC2 instances the targets that run live need.
 
     Returns:
-        dict: With keys 'models' (each distinct model name under benchmark, see
+        dict: With keys 'instances' (how many EC2 instances the live targets will launch),
+            'models' (each distinct model name under benchmark, see
             model_name_from_location), 'targets' (one '{model}: {install source}' line per
             target, or '{model} {test}: {install source}' when TESTS is set, marking the
             OASISLMF_BASELINE_VERSION target '(baseline)' and any target taken from
@@ -212,7 +215,15 @@ def build_benchmark_plan(config, targets):
         suffix = f" ({', '.join(tags)})" if tags else ""
         target_lines.append(f"{group_name(target['model'], target['test'])}: {target['source_label']}{suffix}")
 
-    return {"models": models, "targets": target_lines, "execution_mode": resolve_execution_mode(config)}
+    live = [target for target in targets if target["source"] != STORED_SOURCE]
+    instance_keys = {
+        (target["run_config"]["REPO_LOCATION"], target["version"]) if tests_per_instance == "shared" else target["label"]
+        for target in live
+    }
+    return {
+        "models": models, "targets": target_lines, "execution_mode": resolve_execution_mode(config),
+        "instances": len(instance_keys), "tests_per_instance": tests_per_instance,
+    }
 
 
 SHARED_MODEL_CONFIG_KEYS = [
@@ -352,4 +363,9 @@ def format_benchmark_plan(plan):
     lines.append("")
     lines.append("Execution mode:")
     lines.append(plan["execution_mode"])
+    if "instances" in plan:
+        lines.append("")
+        lines.append("EC2 instances:")
+        sharing = " (tests share an instance per version)" if plan.get("tests_per_instance") == "shared" else ""
+        lines.append(f"{plan['instances']}{sharing}")
     return "\n".join(lines)

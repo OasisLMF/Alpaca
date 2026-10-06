@@ -123,3 +123,13 @@ def test_manifest_differences_says_when_a_run_has_no_input_checksums():
     notes = manifest_differences(_manifest(), _manifest(inputs={}), "2.5.7", "2.5.8")
 
     assert notes == ["no input checksums for 2.5.8, so its inputs can't be checked"]
+
+
+def test_manifest_differences_flags_a_shared_run_against_a_separate_one():
+    reference, other = _manifest(), {**_manifest(), "tests_per_instance": "shared"}
+
+    assert manifest_differences(reference, other, "2.5.7", "2.5.8") == ["tests per instance differs: separate vs shared"]
+
+
+def test_build_manifest_records_tests_per_instance(tmp_path):
+    assert build_manifest(_target(), tmp_path, tests_per_instance="shared")["tests_per_instance"] == "shared"

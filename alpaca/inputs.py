@@ -74,6 +74,13 @@ RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket
 SECURITY_GROUP_ID = ("SECURITY_GROUP_ID", "Security group id of EC2 instance", "MySecurityGroup")
 SSH_MAX_RETRIES = ("SSH_MAX_RETRIES", "Maximum number of SSH-over-SSM connection attempts before timeout", 60)
 SUBNET_ID = ("SUBNET_ID", "Subnet id of EC2 instance", "MySubnetID")
+TESTS_PER_INSTANCE = (
+    "TESTS_PER_INSTANCE",
+    "How a benchmark's TESTS share EC2 instances: 'separate' (the default) runs every test on its own "
+    "instance, 'shared' runs all of a model's tests at one OasisLMF version in turn on one instance, "
+    "installing OasisLMF and pulling the model only once",
+    "separate"
+)
 TESTS = (
     "TESTS",
     "JSON array of test names to benchmark (benchmark mode), each run from tests/<name>/oasislmf.json in every "

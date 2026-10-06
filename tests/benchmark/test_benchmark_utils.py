@@ -1,5 +1,6 @@
 from alpaca.benchmark.utils import (
-    REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_tests_config, validate_version_pair_config
+    REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_tests_config, validate_tests_per_instance,
+    validate_version_pair_config
 )
 from alpaca.exceptions import OasisAlpacaConfigError
 from alpaca.inputs import (
@@ -119,3 +120,21 @@ def test_validate_version_pair_config_raises_alongside_oasislmf_versions():
 def test_validate_version_pair_config_raises_when_both_are_the_same_version():
     with pytest.raises(OasisAlpacaConfigError, match="both '2.5.7'"):
         validate_version_pair_config({"OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.7"})
+
+
+def test_validate_tests_per_instance_defaults_to_separate():
+    assert validate_tests_per_instance({}) == "separate"
+
+
+def test_validate_tests_per_instance_accepts_shared_with_tests():
+    assert validate_tests_per_instance({"TESTS_PER_INSTANCE": "shared", "TESTS": ["test_1"]}) == "shared"
+
+
+def test_validate_tests_per_instance_raises_on_an_unknown_value():
+    with pytest.raises(OasisAlpacaConfigError, match="must be one of separate, shared"):
+        validate_tests_per_instance({"TESTS_PER_INSTANCE": "together", "TESTS": ["test_1"]})
+
+
+def test_validate_tests_per_instance_raises_on_shared_without_tests():
+    with pytest.raises(OasisAlpacaConfigError, match="needs TESTS"):
+        validate_tests_per_instance({"TESTS_PER_INSTANCE": "shared", "PATH_TO_OASISLMF_JSON": "./oasislmf.json"})

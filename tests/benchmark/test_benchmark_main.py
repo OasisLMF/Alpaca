@@ -1,7 +1,7 @@
-from alpaca.benchmark.main import main
+from alpaca.benchmark.main import benchmark_failed, main
 from alpaca.benchmark.report import run_name
 from alpaca.benchmark.s3_baseline import upload_baseline
-from alpaca.exceptions import OasisAlpacaConfigError
+from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from moto import mock_aws
 from pathlib import Path
 from unittest import mock
@@ -975,3 +975,55 @@ def test_main_flags_a_run_that_is_not_like_for_like_with_the_baseline(mock_model
         "PiWind 2.5.8": ["model settings changed (meta-data/model_settings.json)"],
     }
     assert "- PiWind 2.5.8: not like for like" in output["report_path"].read_text()
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_reports_why_a_run_failed(mock_model_main, tmp_path):
+    results_dir = tmp_path / "results"
+    succeed = _fake_run(results_dir, {"2.5.7": 200})
+
+    def run(run_config):
+        if run_config["OASISLMF_VERSION"] == "2.5.8":
+            raise OasisAlpacaError("Command failed: oasislmf model run\nOdsException: Invalid model_settings file or file path")
+        succeed(run_config)
+
+    mock_model_main.side_effect = run
+
+    output = main(_pair_config(tmp_path, results_dir))
+
+    report_text = output["report_path"].read_text()
+    assert "Failed runs:\n- PiWind 2.5.8: failed during model run" in report_text
+    assert "    OdsException: Invalid model_settings file or file path" in report_text
+    assert f"    details: {results_dir / 'PiWind-2.5.8' / 'failure.txt'}" in report_text
+    assert benchmark_failed(output)
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_passes_when_every_run_worked_and_outputs_match(mock_model_main, tmp_path):
+    results_dir = tmp_path / "results"
+    mock_model_main.side_effect = _fake_run(results_dir, {"2.5.7": 200, "2.5.8": 150})
+
+    assert not benchmark_failed(main(_pair_config(tmp_path, results_dir)))
+
+
+def test_main_rejects_an_unknown_tests_per_instance_before_running_anything(tmp_path):
+    config_path = _write_config(tmp_path, {"TESTS_PER_INSTANCE": "together"})
+
+    with pytest.raises(OasisAlpacaConfigError, match="TESTS_PER_INSTANCE"):
+        main(config_path)
+
+
+@mock.patch("alpaca.benchmark.executor.RemoteController")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_runs_shared_tests_on_one_instance_per_version(mock_model_main, mock_controller, tmp_path, capsys):
+    config_path = _write_config(tmp_path, {
+        "PATH_TO_OASISLMF_JSON": "", "TESTS": ["test_1", "test_2", "test_3"], "TESTS_PER_INSTANCE": "shared",
+        "OASISLMF_VERSIONS": ["2.5.7", "2.5.8"],
+    })
+
+    output = main(config_path)
+
+    assert mock_controller.call_count == 2
+    mock_model_main.assert_not_called()
+    assert len(output["results"]) == 6
+    assert "EC2 instances:\n2 (tests share an instance per version)" in capsys.readouterr().out

@@ -1,4 +1,6 @@
-from alpaca.model.commands import input_checksum_commands, model_run_commands
+from alpaca.model.commands import (
+    CLEAR_COMPILE_CACHE_COMMAND, DROP_FILE_CACHE_COMMAND, input_checksum_commands, model_run_commands, shared_test_commands
+)
 
 import hashlib
 import json
@@ -106,3 +108,48 @@ def test_model_run_commands_records_input_checksums_before_running():
     checksum_index = commands.index(input_checksum_commands("./oasislmf.json")[0])
     run_index = next(i for i, command in enumerate(commands) if "oasislmf model run" in command)
     assert checksum_index < run_index
+
+
+def test_input_checksum_commands_writes_to_a_given_output_path(tmp_path):
+    (tmp_path / "oasislmf.json").write_text("{}")
+    command = input_checksum_commands("oasislmf.json", "alpaca_tests/test_1/runs/input_checksums.json")[0]
+
+    subprocess.run(["bash", "-c", command], cwd=tmp_path, check=True)
+
+    checksums = json.loads((tmp_path / "alpaca_tests" / "test_1" / "runs" / "input_checksums.json").read_text())
+    assert checksums["oasislmf_json"]["path"] == "oasislmf.json"
+
+
+def test_shared_test_commands_run_each_test_in_its_own_directory():
+    """Each test's output, result.txt and checksums stay apart, and paths are recorded from the model's base."""
+    commands = shared_test_commands("tests/test_2/oasislmf.json", "alpaca_tests/test_2")
+
+    assert commands[0] == "mkdir -p alpaca_tests/test_2/runs"
+    assert commands[1] == input_checksum_commands("tests/test_2/oasislmf.json", "alpaca_tests/test_2/runs/input_checksums.json")[0]
+    assert commands[2] == CLEAR_COMPILE_CACHE_COMMAND
+    assert commands[3] == DROP_FILE_CACHE_COMMAND
+    assert commands[4] == (
+        'set -o pipefail; cd alpaca_tests/test_2 && oasislmf model run -C "$HOME"/tests/test_2/oasislmf.json'
+        " | tee runs/result.txt"
+    )
+
+
+def test_drop_file_cache_command_never_fails():
+    assert DROP_FILE_CACHE_COMMAND.endswith("|| true")
+
+
+def test_clear_compile_cache_command_removes_numba_cache_files_and_never_fails(tmp_path):
+    """Run against a fake oasislmf package: its cached .nbi/.nbc files go, its source stays."""
+    package = tmp_path / "site" / "oasislmf" / "pytools"
+    package.mkdir(parents=True)
+    (tmp_path / "site" / "oasislmf" / "__init__.py").write_text("")
+    for name in ("kernel.py", "kernel.f-1.py310.nbi", "kernel.f-1.py310.1.nbc"):
+        (package / name).write_text("x")
+    (tmp_path / "home" / ".cache" / "numba").mkdir(parents=True)
+
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path / "home"), "PYTHONPATH": str(tmp_path / "site")}
+    completed = subprocess.run(["bash", "-c", CLEAR_COMPILE_CACHE_COMMAND], env=env)
+
+    assert completed.returncode == 0
+    assert sorted(path.name for path in package.iterdir()) == ["kernel.py"]
+    assert not (tmp_path / "home" / ".cache" / "numba").exists()

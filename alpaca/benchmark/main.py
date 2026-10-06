@@ -1,10 +1,12 @@
 from alpaca.benchmark.utils import (
-    REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_tests_config, validate_version_pair_config
+    REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_tests_config, validate_tests_per_instance,
+    validate_version_pair_config
 )
 from alpaca.benchmark.scripts import (
     LIVE_SOURCE, STORED_SOURCE, build_benchmark_plan, build_benchmark_targets, format_benchmark_plan, group_name
 )
 from alpaca.benchmark.executor import run_benchmark_targets
+from alpaca.benchmark.failure import describe_failure
 from alpaca.benchmark.manifest import manifest_differences, read_manifest
 from alpaca.benchmark.comparison import build_comparison_reports, resolve_relative_tolerance
 from alpaca.benchmark.report import build_report_text, run_name, write_report
@@ -54,12 +56,13 @@ def main(config_file):
     validate_s3_baseline_config(config)
     validate_tests_config(config)
     validate_version_pair_config(config)
+    tests_per_instance = validate_tests_per_instance(config)
 
     targets = build_benchmark_targets(config, resolve_stored_versions(config))
-    plan = build_benchmark_plan(config, targets)
+    plan = build_benchmark_plan(config, targets, tests_per_instance)
     print(format_benchmark_plan(plan))
 
-    results = _resolve_targets(config, targets, plan["execution_mode"])
+    results = _resolve_targets(config, targets, plan["execution_mode"], tests_per_instance)
     _mark_results(config, targets, results)
     if config.get("PUBLISH_BASELINE", False):
         _publish_baselines(config, targets, results)
@@ -74,20 +77,21 @@ def main(config_file):
     return {"results": results, "comparison": comparison_groups, "report_path": report_path}
 
 
-def _resolve_targets(config, targets, execution_mode):
+def _resolve_targets(config, targets, execution_mode, tests_per_instance="separate"):
     """Produce a result for every target, running the live ones and downloading the stored ones.
 
     Args:
         config: Validated benchmark configuration dictionary.
         targets: List of targets as returned by build_benchmark_targets.
         execution_mode: 'parallel' or 'sequential', see run_benchmark_targets.
+        tests_per_instance: 'separate' or 'shared', see run_benchmark_targets.
 
     Returns:
         list[dict]: One result per target, in targets order, so a caller can pair the two up
             by position.
     """
     live_targets = [target for target in targets if target["source"] == LIVE_SOURCE]
-    live_results = run_benchmark_targets(live_targets, execution_mode) if live_targets else []
+    live_results = run_benchmark_targets(live_targets, execution_mode, tests_per_instance) if live_targets else []
 
     results = dict(zip((target["label"] for target in live_targets), live_results))
     for target in targets:
@@ -124,9 +128,13 @@ def _download_stored_target(config, target):
         download_baseline(
             config["BENCHMARK_BUCKET"], target["model"], target["test"], target["version"], result_directory, config
         )
-    except Exception:
+    except Exception as error:
         logger.exception(f"Downloading the stored baseline for target '{target['label']}' failed")
-        return {**result, "status": "failed"}
+        failure = describe_failure(error)
+        return {**result, "status": "failed", "failure": {
+            "stage": "downloading the stored baseline", "message": failure["message"], "missing_inputs": [],
+            "details": None,
+        }}
 
     runtime_seconds, step_timings = resolve_model_runtime(result_directory, None)
     if runtime_seconds is not None:
@@ -296,3 +304,19 @@ def _publish_baselines(config, targets, results):
             config["BENCHMARK_BUCKET"], target["model"], target["test"], version,
             target["run_config"]["RESULT_DIRECTORY"], config
         )
+
+
+def benchmark_failed(output):
+    """Say whether a finished benchmark should fail the command that ran it.
+
+    Args:
+        output: dict as returned by main.
+
+    Returns:
+        bool: True when any run failed or any group's output comparison failed, so a scheduled
+            or CI run doesn't look green when it isn't. A run that isn't like for like with its
+            reference is only reported, as its outputs and timings may still be fine.
+    """
+    if any(result["status"] != "success" for result in output["results"]):
+        return True
+    return any(group["report"] is not None and group["report"]["status"] != "pass" for group in output["comparison"])

@@ -3,7 +3,7 @@ from alpaca.inputs import (
     AMI_ID, SECURITY_GROUP_ID, SUBNET_ID, IAM_INSTANCE_PROFILE, REPO_LOCATIONS, PATH_TO_OASISLMF_JSON, AWS_REGION,
     BENCHMARK_BUCKET, COMPARISON_TOLERANCE, OASISLMF_VERSIONS, OASISLMF_BRANCHES, INSTANCE_TYPE, DISK_GB, LOG_LEVEL,
     EC2_NAME, EXECUTION_MODE, MAX_LIFETIME_HOURS, PUBLISH_BASELINE, SSH_MAX_RETRIES, AWS_PROFILE, DEBUG,
-    RESULT_DIRECTORY, TESTS, OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION
+    RESULT_DIRECTORY, TESTS, OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION, TESTS_PER_INSTANCE
 )
 
 
@@ -13,7 +13,8 @@ REQUIRED_CONFIG_BENCHMARK = [
 OPTIONAL_CONFIG_BENCHMARK = [
     AWS_REGION, BENCHMARK_BUCKET, COMPARISON_TOLERANCE, OASISLMF_VERSIONS, OASISLMF_BRANCHES, INSTANCE_TYPE,
     DISK_GB, LOG_LEVEL, EC2_NAME, EXECUTION_MODE, MAX_LIFETIME_HOURS, PATH_TO_OASISLMF_JSON, PUBLISH_BASELINE,
-    SSH_MAX_RETRIES, AWS_PROFILE, DEBUG, RESULT_DIRECTORY, TESTS, OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION
+    SSH_MAX_RETRIES, AWS_PROFILE, DEBUG, RESULT_DIRECTORY, TESTS, OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION,
+    TESTS_PER_INSTANCE
 ]
 
 
@@ -72,3 +73,29 @@ def validate_version_pair_config(config):
         )
     if baseline == test:
         raise OasisAlpacaConfigError(f"OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION are both '{baseline}'")
+
+
+VALID_TESTS_PER_INSTANCE = ("separate", "shared")
+
+
+def validate_tests_per_instance(config):
+    """Validate TESTS_PER_INSTANCE before any EC2 spend.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Returns:
+        str: 'separate' (the default) or 'shared'.
+
+    Raises:
+        OasisAlpacaConfigError: If it's set to anything else, or to 'shared' without TESTS,
+            since there's then only one run per instance to share it with.
+    """
+    tests_per_instance = config.get("TESTS_PER_INSTANCE") or "separate"
+    if tests_per_instance not in VALID_TESTS_PER_INSTANCE:
+        raise OasisAlpacaConfigError(
+            f"TESTS_PER_INSTANCE must be one of {', '.join(VALID_TESTS_PER_INSTANCE)}, got '{tests_per_instance}'"
+        )
+    if tests_per_instance == "shared" and not config.get("TESTS"):
+        raise OasisAlpacaConfigError("TESTS_PER_INSTANCE 'shared' needs TESTS, as there are no tests to share an instance")
+    return tests_per_instance
