@@ -352,3 +352,41 @@ def test_a_successful_run_has_no_failure(mock_model_main, tmp_path):
 
     assert "failure" not in result
     assert not (tmp_path / "model-test_1-2.5.8" / "failure.txt").exists()
+
+
+@mock.patch("alpaca.benchmark.executor.write_manifest", side_effect=OSError("disk full"))
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_a_manifest_that_cannot_be_written_does_not_fail_the_run(mock_model_main, mock_write_manifest, tmp_path):
+    result = run_benchmark_targets([_test_entry("test_1", "2.5.8", tmp_path)], "sequential")[0]
+
+    assert result["status"] == "success"
+
+
+@mock.patch("alpaca.benchmark.executor.write_failure", side_effect=OSError("disk full"))
+@mock.patch("alpaca.benchmark.executor.model_main", side_effect=RuntimeError("boom"))
+def test_a_failed_run_is_still_reported_when_its_failure_txt_cannot_be_written(mock_model_main, mock_write_failure, tmp_path):
+    result = run_benchmark_targets([_test_entry("test_1", "2.5.8", tmp_path)], "sequential")[0]
+
+    assert result["status"] == "failed"
+    assert result["failure"]["message"] == "boom"
+    assert result["failure"]["details"] is None
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_a_shared_test_whose_results_cannot_be_downloaded_fails_without_stopping_the_rest(mock_model_main, tmp_path):
+    entries = [_test_entry(test, "2.5.8", tmp_path) for test in ("test_1", "test_2")]
+    remote_controller, controller = _fake_controller()
+    download = controller.download_results.side_effect
+
+    def download_results(from_path, to_path):
+        if "test_1" in from_path:
+            raise OasisAlpacaError("Nothing to download")
+        download(from_path, to_path)
+
+    controller.download_results.side_effect = download_results
+
+    with mock.patch("alpaca.benchmark.executor.RemoteController", remote_controller):
+        results = run_benchmark_targets(entries, "sequential", "shared")
+
+    assert [result["status"] for result in results] == ["failed", "success"]
+    assert results[0]["failure"]["stage"] == "downloading results"

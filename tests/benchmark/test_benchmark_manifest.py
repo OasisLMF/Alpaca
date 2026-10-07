@@ -133,3 +133,10 @@ def test_manifest_differences_flags_a_shared_run_against_a_separate_one():
 
 def test_build_manifest_records_tests_per_instance(tmp_path):
     assert build_manifest(_target(), tmp_path, tests_per_instance="shared")["tests_per_instance"] == "shared"
+
+
+def test_build_manifest_has_no_inputs_when_the_checksums_are_unreadable(tmp_path):
+    """A truncated input_checksums.json mustn't stop the manifest being written."""
+    (tmp_path / INPUT_CHECKSUMS_FILENAME).write_text("not json")
+
+    assert build_manifest(_target(), tmp_path)["inputs"] == {}
