@@ -226,6 +226,13 @@ A benchmark runs one or more models at several OasisLMF versions (or branches), 
 them: how long each step took, and whether the outputs match. Use it to check that a new
 OasisLMF release gives the same results as the last one, and whether it's faster or slower.
 
+Two PDFs in `docs/` go with this section:
+
+* [Alpaca workflow](docs/alpaca-model-run-workflow.pdf): diagrams of the model run and the
+  benchmark, the config keys, and how to read the report and a failed run.
+* [Benchmark config guide](docs/alpaca-benchmark-configs.pdf): fourteen ready-to-copy benchmark
+  configs, one per common setup, each showing how many EC2 instances it launches.
+
 ### How a benchmark runs
 
 1. **Build the targets.** Every model in `REPO_LOCATIONS` is paired with every version or
