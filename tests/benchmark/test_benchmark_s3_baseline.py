@@ -2,9 +2,12 @@ from alpaca.benchmark.s3_baseline import (
     download_baseline, resolve_stored_versions, upload_baseline, validate_s3_baseline_config
 )
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
+from datetime import datetime, timezone
 from moto import mock_aws
+from unittest import mock
 
 import boto3
+import json
 import logging
 import pytest
 
@@ -54,16 +57,140 @@ def test_upload_baseline_skips_performance_upload_when_no_result_file(tmp_path):
         client.get_object(Bucket=bucket, Key="PiWind/2.5.4/performance/result.txt")
 
 
+def _keys(bucket, prefix=""):
+    paginator = boto3.client("s3", region_name=REGION).get_paginator("list_objects_v2")
+    return sorted(obj["Key"] for page in paginator.paginate(Bucket=bucket, Prefix=prefix) for obj in page.get("Contents", []))
+
+
+def _publish_at(bucket, published_at, files, tmp_path, name, result_text=None, report_path=None):
+    """Publish a PiWind 2.5.4 baseline as though it was published at published_at."""
+    run_directory = _write_run_directory(tmp_path / name, files, result_text)
+    with mock.patch("alpaca.benchmark.s3_baseline.datetime") as fake_datetime:
+        fake_datetime.now.return_value = published_at
+        fake_datetime.fromisoformat = datetime.fromisoformat
+        upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", run_directory, CONFIG, report_path)
+
+
 @mock_aws
-def test_upload_baseline_warns_when_overwriting_existing_baseline(tmp_path, caplog):
+def test_upload_baseline_moves_the_previous_baseline_into_its_history(tmp_path, caplog):
     bucket = _make_bucket()
-    run_directory = _write_run_directory(tmp_path, {"summary.csv": "a,b\n1,2\n"})
-    upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", run_directory, CONFIG)
+    first = datetime(2026, 10, 6, 14, 12, 0, tzinfo=timezone.utc)
+    _publish_at(bucket, first, {"summary.csv": "old\n"}, tmp_path, "first", result_text="COMPLETED: x in 1.0s\n")
 
-    with caplog.at_level(logging.WARNING, logger="alpaca.benchmark.s3_baseline"):
-        upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", run_directory, CONFIG)
+    with caplog.at_level(logging.INFO, logger="alpaca.benchmark.s3_baseline"):
+        _publish_at(bucket, datetime(2026, 10, 14, tzinfo=timezone.utc), {"summary.csv": "new\n"}, tmp_path, "second")
 
-    assert "Overwriting existing baseline" in caplog.text
+    client = boto3.client("s3", region_name=REGION)
+    history = "PiWind/2.5.4/history/20261006-141200"
+    assert client.get_object(Bucket=bucket, Key=f"{history}/output/summary.csv")["Body"].read() == b"old\n"
+    assert client.get_object(Bucket=bucket, Key=f"{history}/performance/result.txt")["Body"].read() == b"COMPLETED: x in 1.0s\n"
+    assert json.loads(client.get_object(Bucket=bucket, Key=f"{history}/published.json")["Body"].read())["published_at"] == (
+        "2026-10-06T14:12:00+00:00"
+    )
+    assert client.get_object(Bucket=bucket, Key="PiWind/2.5.4/output/summary.csv")["Body"].read() == b"new\n"
+    assert f"Moved the previous PiWind 2.5.4 baseline to s3://{bucket}/{history}" in caplog.text
+
+
+@mock_aws
+def test_upload_baseline_leaves_nothing_of_the_previous_baseline_behind(tmp_path):
+    """A file the new run doesn't produce mustn't stay in the current baseline, mixed in with the new run's."""
+    bucket = _make_bucket()
+    _publish_at(
+        bucket, datetime(2026, 10, 6, tzinfo=timezone.utc), {"summary.csv": "old\n", "extra.csv": "old\n"}, tmp_path,
+        "first", result_text="COMPLETED: x in 1.0s\n",
+    )
+
+    _publish_at(bucket, datetime(2026, 10, 14, tzinfo=timezone.utc), {"summary.csv": "new\n"}, tmp_path, "second")
+
+    current = [key for key in _keys(bucket, "PiWind/2.5.4/") if "/history/" not in key]
+    assert current == ["PiWind/2.5.4/output/summary.csv", "PiWind/2.5.4/published.json"]
+
+
+@mock_aws
+def test_upload_baseline_keeps_every_earlier_baseline(tmp_path):
+    bucket = _make_bucket()
+    for day in (1, 2, 3):
+        _publish_at(bucket, datetime(2026, 10, day, tzinfo=timezone.utc), {"summary.csv": f"{day}\n"}, tmp_path, f"run{day}")
+
+    assert _keys(bucket, "PiWind/2.5.4/history/") == [
+        "PiWind/2.5.4/history/20261001-000000/output/summary.csv",
+        "PiWind/2.5.4/history/20261001-000000/published.json",
+        "PiWind/2.5.4/history/20261002-000000/output/summary.csv",
+        "PiWind/2.5.4/history/20261002-000000/published.json",
+    ]
+
+
+@mock_aws
+def test_upload_baseline_names_a_baseline_published_before_published_json_by_when_it_was_written(tmp_path):
+    bucket = _make_bucket()
+    client = boto3.client("s3", region_name=REGION)
+    client.put_object(Bucket=bucket, Key="PiWind/2.5.4/output/summary.csv", Body=b"old\n")
+    written = client.head_object(Bucket=bucket, Key="PiWind/2.5.4/output/summary.csv")["LastModified"]
+
+    _publish_at(bucket, datetime(2030, 1, 1, tzinfo=timezone.utc), {"summary.csv": "new\n"}, tmp_path, "second")
+
+    stamp = written.astimezone(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    assert _keys(bucket, "PiWind/2.5.4/history/") == [f"PiWind/2.5.4/history/{stamp}/output/summary.csv"]
+
+
+@mock_aws
+def test_upload_baseline_does_not_touch_the_stored_baseline_when_the_run_has_no_output(tmp_path):
+    bucket = _make_bucket()
+    _publish_at(bucket, datetime(2026, 10, 6, tzinfo=timezone.utc), {"summary.csv": "old\n"}, tmp_path, "first")
+
+    with pytest.raises(OasisAlpacaError):
+        upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", tmp_path / "empty", CONFIG)
+
+    assert _keys(bucket) == ["PiWind/2.5.4/output/summary.csv", "PiWind/2.5.4/published.json"]
+
+
+@mock_aws
+def test_upload_baseline_keeps_the_previous_baseline_when_archiving_fails(tmp_path):
+    bucket = _make_bucket()
+    _publish_at(bucket, datetime(2026, 10, 6, tzinfo=timezone.utc), {"summary.csv": "old\n"}, tmp_path, "first")
+    run_directory = _write_run_directory(tmp_path / "second", {"summary.csv": "new\n"})
+
+    failing_client = mock.Mock(wraps=boto3.client("s3", region_name=REGION))
+    failing_client.copy.side_effect = RuntimeError("copy failed")
+    with mock.patch("alpaca.benchmark.s3_baseline._s3_client", return_value=failing_client):
+        with pytest.raises(RuntimeError):
+            upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", run_directory, CONFIG)
+
+    client = boto3.client("s3", region_name=REGION)
+    assert client.get_object(Bucket=bucket, Key="PiWind/2.5.4/output/summary.csv")["Body"].read() == b"old\n"
+
+
+@mock_aws
+def test_upload_baseline_publishes_the_report_and_what_was_published(tmp_path):
+    bucket = _make_bucket()
+    report_path = tmp_path / "benchmark_report.txt"
+    report_path.write_text("Benchmark Report\n")
+    run_directory = _write_run_directory(tmp_path / "run", {"summary.csv": "a\n"})
+
+    upload_baseline(f"s3://{bucket}", "PiWind", "test_1", "2.5.4", run_directory, CONFIG, report_path)
+
+    client = boto3.client("s3", region_name=REGION)
+    assert client.get_object(Bucket=bucket, Key="PiWind/test_1/2.5.4/benchmark_report.txt")["Body"].read() == b"Benchmark Report\n"
+    published = json.loads(client.get_object(Bucket=bucket, Key="PiWind/test_1/2.5.4/published.json")["Body"].read())
+    assert published["model"] == "PiWind"
+    assert published["test"] == "test_1"
+    assert published["oasislmf_version"] == "2.5.4"
+    assert datetime.fromisoformat(published["published_at"]).tzinfo is not None
+
+
+@mock_aws
+def test_stored_baseline_is_still_found_and_downloaded_with_a_history(tmp_path):
+    bucket = _make_bucket()
+    _publish_at(bucket, datetime(2026, 10, 6, tzinfo=timezone.utc), {"summary.csv": "old\n"}, tmp_path, "first")
+    _publish_at(bucket, datetime(2026, 10, 14, tzinfo=timezone.utc), {"summary.csv": "new\n"}, tmp_path, "second")
+    config = {**CONFIG, "BENCHMARK_BUCKET": f"s3://{bucket}", "REPO_LOCATIONS": [PIWIND], "OASISLMF_VERSIONS": ["2.5.4"]}
+
+    assert resolve_stored_versions(config) == {("PiWind", None, "2.5.4")}
+    download_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", tmp_path / "download", CONFIG)
+
+    downloaded = sorted(str(path.relative_to(tmp_path / "download")) for path in (tmp_path / "download").rglob("*") if path.is_file())
+    assert downloaded == ["output/summary.csv"]
+    assert (tmp_path / "download" / "output" / "summary.csv").read_text() == "new\n"
 
 
 @mock_aws
@@ -335,7 +462,10 @@ def test_upload_baseline_keys_a_test_baseline_by_model_then_test_then_version(tm
 
     client = boto3.client("s3", region_name=REGION)
     keys = sorted(obj["Key"] for obj in client.list_objects_v2(Bucket=bucket)["Contents"])
-    assert keys == ["PiWind/test_1/2.5.4/output/summary.csv", "PiWind/test_1/2.5.4/performance/result.txt"]
+    assert keys == [
+        "PiWind/test_1/2.5.4/output/summary.csv", "PiWind/test_1/2.5.4/performance/result.txt",
+        "PiWind/test_1/2.5.4/published.json",
+    ]
 
 
 @mock_aws
