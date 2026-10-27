@@ -1,20 +1,27 @@
 from alpaca.benchmark.comparison import find_output_dir
 from alpaca.benchmark.manifest import MANIFEST_FILENAME
+from alpaca.benchmark.report import REPORT_FILENAME
 from alpaca.benchmark.scripts import (
     benchmark_locations, benchmark_tests, benchmark_versions, group_name, model_name_from_location
 )
 from alpaca.benchmark.timing import find_result_file
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from botocore.exceptions import ClientError
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 import boto3
+import json
 import logging
 
 logger = logging.getLogger(__name__)
 
 PERFORMANCE_RESULT_FILENAME = "result.txt"
+PUBLISHED_FILENAME = "published.json"
+HISTORY_DIRECTORY = "history"
+HISTORY_TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S"
+DELETE_BATCH_SIZE = 1000
 
 
 def _parse_bucket_uri(bucket_uri):
@@ -160,12 +167,93 @@ def _baseline_exists(client, bucket_uri, model, test, version):
     return bool(listing.get("KeyCount"))
 
 
-def upload_baseline(bucket_uri, model, test, version, result_directory, config):
+def _current_baseline_keys(client, bucket, prefix):
+    """List every object of a model/test/version's current baseline, leaving out its history.
+
+    Args:
+        client: boto3 S3 client, see _s3_client.
+        bucket: Bucket name.
+        prefix: The baseline's key prefix, see _baseline_prefix.
+
+    Returns:
+        list[dict]: list_objects_v2 'Contents' entries ('Key', 'LastModified', ...).
+    """
+    history = f"{prefix}/{HISTORY_DIRECTORY}/"
+    paginator = client.get_paginator("list_objects_v2")
+    return [
+        obj
+        for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/")
+        for obj in page.get("Contents", [])
+        if not obj["Key"].startswith(history)
+    ]
+
+
+def _published_at(client, bucket, prefix, objects):
+    """Find when the current baseline was published, to name its folder in the history.
+
+    Args:
+        client: boto3 S3 client, see _s3_client.
+        bucket: Bucket name.
+        prefix: The baseline's key prefix, see _baseline_prefix.
+        objects: The baseline's objects, see _current_baseline_keys.
+
+    Returns:
+        datetime: The 'published_at' its published.json records, or, for a baseline published
+            before those existed (or one whose published.json can't be read), when its newest
+            object was last written.
+    """
+    try:
+        body = client.get_object(Bucket=bucket, Key=f"{prefix}/{PUBLISHED_FILENAME}")["Body"].read()
+        return datetime.fromisoformat(json.loads(body)["published_at"])
+    except (ClientError, ValueError, KeyError, TypeError):
+        return max(obj["LastModified"] for obj in objects)
+
+
+def _archive_baseline(client, bucket, prefix):
+    """Move a model/test/version's current baseline into its history, before it's replaced.
+
+    Everything stored for the baseline (its output, performance data, report and
+    published.json) is copied, server side, to '<prefix>/history/<published at>/' with the same
+    layout, e.g. 'PiWind/test_1/2.5.7/history/20261006-141200/output/...', and only once every
+    copy has worked is the original deleted. That leaves nothing of the old run behind for the
+    new one to be mixed up with, while keeping it to read or re-download later. Benchmarks only
+    ever reuse a baseline's current 'output/', so nothing in the history is reused.
+
+    Args:
+        client: boto3 S3 client, see _s3_client.
+        bucket: Bucket name.
+        prefix: The baseline's key prefix, see _baseline_prefix.
+
+    Returns:
+        str or None: The history prefix the baseline was moved to, or None when there was no
+            baseline to move.
+    """
+    objects = _current_baseline_keys(client, bucket, prefix)
+    if not objects:
+        return None
+
+    stamp = _published_at(client, bucket, prefix, objects).astimezone(timezone.utc).strftime(HISTORY_TIMESTAMP_FORMAT)
+    history_prefix = f"{prefix}/{HISTORY_DIRECTORY}/{stamp}"
+    for obj in objects:
+        relative_key = obj["Key"][len(prefix) + 1:]
+        client.copy({"Bucket": bucket, "Key": obj["Key"]}, bucket, f"{history_prefix}/{relative_key}")
+
+    keys = [obj["Key"] for obj in objects]
+    for start in range(0, len(keys), DELETE_BATCH_SIZE):
+        batch = keys[start:start + DELETE_BATCH_SIZE]
+        client.delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True})
+    return history_prefix
+
+
+def upload_baseline(bucket_uri, model, test, version, result_directory, config, report_path=None):
     """Publish a benchmark target's output and performance data as a model/test/version's baseline.
 
-    The performance data is the run's result.txt and, when there is one, its manifest.json
-    (see alpaca.benchmark.manifest), so a later benchmark reusing the baseline can check it
-    ran under the same conditions.
+    Any baseline already stored for that model, test and version is moved into its history
+    first (see _archive_baseline), so it's kept rather than overwritten. The performance data is
+    the run's result.txt and, when there is one, its manifest.json (see
+    alpaca.benchmark.manifest), so a later benchmark reusing the baseline can check it ran
+    under the same conditions. The benchmark's report goes alongside, so a baseline, current or archived, can be read without
+    re-running anything, and a published.json records when and what was published.
 
     Args:
         bucket_uri: S3 bucket URI (e.g. 's3://alpaca-benchmark') to publish under.
@@ -175,20 +263,22 @@ def upload_baseline(bucket_uri, model, test, version, result_directory, config):
         result_directory: Local directory the target's results were downloaded to (a
             RESULT_DIRECTORY from build_benchmark_targets).
         config: Validated benchmark configuration dictionary, for AWS session settings.
+        report_path: The benchmark_report.txt of the benchmark that produced this run, or None
+            to publish without one.
 
     Raises:
         OasisAlpacaError: If result_directory has no 'output' directory under it (see
-            find_output_dir).
+            find_output_dir). This is checked before the stored baseline is touched.
     """
     bucket, prefix = _baseline_prefix(bucket_uri, model, test, version)
     client = _s3_client(config)
     name = group_name(model, test)
-
-    existing = client.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/", MaxKeys=1)
-    if existing.get("KeyCount"):
-        logger.warning(f"Overwriting existing baseline at s3://{bucket}/{prefix}")
-
     output_dir = find_output_dir(result_directory)
+
+    history_prefix = _archive_baseline(client, bucket, prefix)
+    if history_prefix is not None:
+        logger.info(f"Moved the previous {name} {version} baseline to s3://{bucket}/{history_prefix}")
+
     for file_path in sorted(output_dir.iterdir()):
         if file_path.is_file():
             client.upload_file(str(file_path), bucket, f"{prefix}/output/{file_path.name}")
@@ -204,6 +294,17 @@ def upload_baseline(bucket_uri, model, test, version, result_directory, config):
         client.upload_file(str(manifest_file), bucket, f"{prefix}/performance/{MANIFEST_FILENAME}")
         logger.info(f"Published {name} {version} manifest to s3://{bucket}/{prefix}/performance")
 
+    if report_path is not None and Path(report_path).is_file():
+        client.upload_file(str(report_path), bucket, f"{prefix}/{REPORT_FILENAME}")
+
+    published = {
+        "published_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "model": model,
+        "test": test,
+        "oasislmf_version": version,
+    }
+    client.put_object(Bucket=bucket, Key=f"{prefix}/{PUBLISHED_FILENAME}", Body=json.dumps(published, indent=4).encode())
+
 
 def download_baseline(bucket_uri, model, test, version, local_directory, config):
     """Download a model/test/version's stored baseline output and performance data locally.
@@ -211,7 +312,8 @@ def download_baseline(bucket_uri, model, test, version, local_directory, config)
     Downloads into a shape identical to a normal run's downloaded result directory
     (local_directory/output/*, local_directory/result.txt and, when one was published,
     local_directory/manifest.json), so find_output_dir, find_result_file,
-    resolve_model_runtime and read_manifest all work on it unmodified.
+    resolve_model_runtime and read_manifest all work on it unmodified. Only the current
+    baseline is downloaded, never its history.
 
     Args:
         bucket_uri: S3 bucket URI the baseline is stored under.

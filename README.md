@@ -81,7 +81,8 @@ A few things need to be in place for that to work:
 
 A benchmark that uses `BENCHMARK_BUCKET` also reads and writes S3 from your own machine
 rather than from the instance, so your local credentials need `s3:ListBucket`,
-`s3:GetObject` and (for `PUBLISH_BASELINE`) `s3:PutObject` on that bucket.
+`s3:GetObject` and (for `PUBLISH_BASELINE`) `s3:PutObject` and `s3:DeleteObject` on that
+bucket. Deleting is only used to move a replaced baseline into its history.
 
 Alpaca waits for the SSM Agent to register and then retries the SSH connection, both up to
 `SSH_MAX_RETRIES` attempts three seconds apart (60 attempts, so three minutes, by default).
@@ -162,7 +163,7 @@ loads the config:
 | `EXECUTION_MODE` | `parallel` | benchmark | `parallel` (up to eight instances at once) or `sequential` |
 | `COMPARISON_TOLERANCE` | `0.005` | benchmark | Relative tolerance for numeric cells when diffing outputs (0.005 = 0.5%) |
 | `BENCHMARK_BUCKET` | *(none)* | benchmark | `s3://bucket` holding versioned baseline outputs and metrics |
-| `PUBLISH_BASELINE` | `False` | benchmark | `True` runs every version live and stores each successful run in `BENCHMARK_BUCKET`, overwriting what's there |
+| `PUBLISH_BASELINE` | `False` | benchmark | `True` runs every version live and stores each successful run in `BENCHMARK_BUCKET`, moving what's there into its history — see [Stored S3 baselines](#stored-s3-baselines) |
 
 If neither `OASISLMF_VERSION` nor `OASISLMF_BRANCH` is set, the latest OasisLMF release on
 PyPI is installed. `MAX_LIFETIME_HOURS` only records an end time on the instance tag; Alpaca
@@ -251,11 +252,13 @@ Two PDFs in `docs/` go with this section:
    (see [When a run fails](#when-a-run-fails)).
 5. **Compare.** Within each model (and test), every run is compared with one reference run:
    step timings side by side, and the output files diffed.
-6. **Publish (optional).** With `PUBLISH_BASELINE` on, each successful run is uploaded to
-   `BENCHMARK_BUCKET` so later benchmarks can reuse it.
-7. **Report.** The report is printed and saved as `benchmark_report.txt` in
-   `RESULT_DIRECTORY`. The command exits with status 1 if any run failed or any outputs
-   differed, so a scheduled or CI benchmark doesn't look green when it isn't.
+6. **Report.** The report is printed and saved as `benchmark_report.txt` in
+   `RESULT_DIRECTORY`.
+7. **Publish (optional).** With `PUBLISH_BASELINE` on, each successful run is uploaded to
+   `BENCHMARK_BUCKET`, with the report, so later benchmarks can reuse it.
+
+The command exits with status 1 if any run failed or any outputs differed, so a scheduled
+or CI benchmark doesn't look green when it isn't.
 
 Because timings and outputs are read from the downloaded files, `RESULT_DIRECTORY` must be a
 local path for a benchmark, not `s3://`.
@@ -333,6 +336,8 @@ when `TESTS` is used:
 PiWind/2.5.6/output/...                    # from PATH_TO_OASISLMF_JSON
 PiWind/2.5.6/performance/result.txt
 PiWind/2.5.6/performance/manifest.json
+PiWind/2.5.6/benchmark_report.txt          # the report of the benchmark that published it
+PiWind/2.5.6/published.json                # when it was published, and for which model, test and version
 PiWind/test_1/2.5.6/output/...             # from TESTS
 PiWind/test_1/2.5.6/performance/...
 ```
@@ -340,10 +345,27 @@ PiWind/test_1/2.5.6/performance/...
 A result stored without a test is never reused for a test, or the other way round.
 
 To store results, set `PUBLISH_BASELINE` to `true`. Every version target then runs live
-(nothing is reused), and each one that succeeds is uploaded, **overwriting** whatever was
-stored for that model, test and version. Failed runs and branch targets are never published
-(a branch has no version to store it under). It needs `BENCHMARK_BUCKET` and at least one
-version.
+(nothing is reused), and each one that succeeds is uploaded. Failed runs and branch targets
+are never published (a branch has no version to store it under). It needs
+`BENCHMARK_BUCKET` and at least one version.
+
+Publishing never overwrites a stored result. Whatever was stored for that model, test and
+version is first moved, files and layout unchanged, into a `history/` folder named after
+when it was published:
+
+```
+PiWind/test_1/2.5.7/output/...                              # current: what benchmarks reuse
+PiWind/test_1/2.5.7/benchmark_report.txt
+PiWind/test_1/2.5.7/history/20261006-141200/output/...      # what it replaced
+PiWind/test_1/2.5.7/history/20261006-141200/benchmark_report.txt
+```
+
+Only the current result is ever reused or downloaded; the history is there to read, or to
+copy back if a republish turns out to be wrong. Nothing of the old result is left in the
+current one, so a file the new run doesn't produce can't get mixed in with it. If the move
+fails, nothing is published and the stored result is left as it was. Results stored before
+this have no `published.json` or report, and are named after when their files were last
+written.
 
 ### Reading the report
 

@@ -603,6 +603,26 @@ def test_main_publishes_every_version_target_when_configured(mock_model_main, mo
 
 @mock.patch("alpaca.benchmark.main.upload_baseline")
 @mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_publishes_the_finished_report_with_each_baseline(mock_model_main, mock_upload_baseline, tmp_path):
+    """The report is written before publishing, so the stored baseline carries the report that produced it."""
+    results_dir = tmp_path / "results"
+    config_path = _write_config(tmp_path, {
+        "OASISLMF_VERSIONS": ["2.5.6"],
+        "BENCHMARK_BUCKET": "s3://alpaca-benchmark",
+        "PUBLISH_BASELINE": "True",
+        "RESULT_DIRECTORY": str(results_dir),
+    })
+    published_reports = []
+    mock_upload_baseline.side_effect = lambda *args: published_reports.append(Path(args[6]).read_text())
+
+    output = main(config_path)
+
+    assert mock_upload_baseline.call_args.args[6] == output["report_path"]
+    assert published_reports == [output["report_path"].read_text()]
+
+
+@mock.patch("alpaca.benchmark.main.upload_baseline")
+@mock.patch("alpaca.benchmark.executor.model_main")
 def test_main_does_not_publish_a_branch_target(mock_model_main, mock_upload_baseline, tmp_path):
     """A baseline is stored under a version, which a branch target hasn't got."""
     config_path = _write_config(tmp_path, {

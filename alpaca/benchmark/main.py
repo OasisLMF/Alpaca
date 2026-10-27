@@ -64,8 +64,6 @@ def main(config_file):
 
     results = _resolve_targets(config, targets, plan["execution_mode"], tests_per_instance)
     _mark_results(config, targets, results)
-    if config.get("PUBLISH_BASELINE", False):
-        _publish_baselines(config, targets, results)
     comparison_groups = _compare_targets(targets, results, relative_tolerance)
 
     print(build_report_text(results, comparison_groups, colour=True))
@@ -73,6 +71,8 @@ def main(config_file):
     result_directory = Path(targets[0]["run_config"]["RESULT_DIRECTORY"]).parent
     report_path = write_report(report_text, result_directory)
     logger.info(f"Benchmark report written to {report_path}")
+    if config.get("PUBLISH_BASELINE", False):
+        _publish_baselines(config, targets, results, report_path)
 
     return {"results": results, "comparison": comparison_groups, "report_path": report_path}
 
@@ -285,16 +285,18 @@ def _compare_group(pairs, relative_tolerance):
     return {"report": report, "skip_reason": "", "manifest_notes": manifest_notes, "reference": run_name(reference[1])}
 
 
-def _publish_baselines(config, targets, results):
+def _publish_baselines(config, targets, results, report_path=None):
     """Publish each successful version target's results as that version's stored baseline.
 
     Branch targets are skipped: a baseline is stored under an OasisLMF version, and a branch
-    has none to store it under.
+    has none to store it under. A baseline already stored for a version is moved into its
+    history rather than overwritten (see alpaca.benchmark.s3_baseline.upload_baseline).
 
     Args:
         config: Validated benchmark configuration dictionary.
         targets: List of targets as returned by build_benchmark_targets.
         results: The matching results, in the same order (see _resolve_targets).
+        report_path: The benchmark's saved report, published alongside each baseline.
     """
     for target, result in zip(targets, results):
         version = target["run_config"].get("OASISLMF_VERSION")
@@ -302,7 +304,7 @@ def _publish_baselines(config, targets, results):
             continue
         upload_baseline(
             config["BENCHMARK_BUCKET"], target["model"], target["test"], version,
-            target["run_config"]["RESULT_DIRECTORY"], config
+            target["run_config"]["RESULT_DIRECTORY"], config, report_path
         )
 
 
