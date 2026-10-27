@@ -193,7 +193,9 @@ def build_benchmark_plan(config, targets, tests_per_instance="separate"):
             model_name_from_location), 'targets' (one '{model}: {install source}' line per
             target, or '{model} {test}: {install source}' when TESTS is set, marking the
             OASISLMF_BASELINE_VERSION target '(baseline)' and any target taken from
-            BENCHMARK_BUCKET rather than run '(from S3)') and 'execution_mode'.
+            BENCHMARK_BUCKET rather than run '(from S3)', adding when it was published for a
+            BASELINE_AS_OF pick, e.g. '(baseline, from S3, published 2026-10-08 14:12 UTC)') and
+            'execution_mode'.
 
     Raises:
         OasisAlpacaConfigError: If EXECUTION_MODE is set to something other than
@@ -212,6 +214,8 @@ def build_benchmark_plan(config, targets, tests_per_instance="separate"):
             tags.append("baseline")
         if target["source"] == STORED_SOURCE:
             tags.append("from S3")
+        if target.get("snapshot") is not None:
+            tags.append(f"published {target['snapshot']['published_at']:%Y-%m-%d %H:%M} UTC")
         suffix = f" ({', '.join(tags)})" if tags else ""
         target_lines.append(f"{group_name(target['model'], target['test'])}: {target['source_label']}{suffix}")
 

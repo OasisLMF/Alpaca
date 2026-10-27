@@ -2,6 +2,13 @@
 AMI_ID = ("AMI_ID", "Amazon Machine ID", "ami-09079da11cd2861fa")
 AWS_PROFILE = ("AWS_PROFILE", "Named AWS CLI profile to use for AWS calls and the SSM session tunnel (optional)", "")
 AWS_REGION = ("AWS_REGION", "region of EC2 instance to create", "eu-west-1")
+BASELINE_AS_OF = (
+    "BASELINE_AS_OF",
+    "Compare against the OASISLMF_BASELINE_VERSION baseline that was current at a date (YYYY-MM-DD, end of that day "
+    "UTC) or publish time (YYYYMMDD-HHMMSS, UTC), taken from BENCHMARK_BUCKET's history of that baseline rather than "
+    "the latest one (unset uses the latest)",
+    ""
+)
 BENCHMARK_BUCKET = (
     "BENCHMARK_BUCKET",
     "S3 bucket (s3://bucket-name) storing versioned OasisLMF baseline outputs and performance metrics. Any "
