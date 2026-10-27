@@ -19,13 +19,17 @@ def run_name(result):
             'PiWind test_1 2.5.6') when the run is one of a TESTS benchmark's, followed by
             '(baseline)' for the run the others are compared against (see
             alpaca.benchmark.main._mark_results) and '(from S3)' for one downloaded from
-            BENCHMARK_BUCKET rather than run, e.g. 'PiWind 2.5.6 (baseline, from S3)'.
+            BENCHMARK_BUCKET rather than run, e.g. 'PiWind 2.5.6 (baseline, from S3)', with the
+            date it was published when BASELINE_AS_OF picked it, e.g. 'PiWind 2.5.6 (baseline,
+            from S3, 2026-10-08)'.
     """
     tags = []
     if result.get("is_baseline"):
         tags.append("baseline")
     if result.get("source") == STORED_SOURCE:
         tags.append("from S3")
+    if result.get("baseline_published_at") is not None:
+        tags.append(f"{result['baseline_published_at']:%Y-%m-%d}")
     suffix = f" ({', '.join(tags)})" if tags else ""
     return f"{group_name(result['model'], result['test'])} {result['version']}{suffix}"
 
