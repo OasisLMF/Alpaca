@@ -45,7 +45,8 @@ MAX_LIFETIME_HOURS = ("MAX_LIFETIME_HOURS", "Max lifetime of EC2 instance in hou
 OASISLMF_BASELINE_VERSION = (
     "OASISLMF_BASELINE_VERSION",
     "OasisLMF version a benchmark compares OASISLMF_TEST_VERSION against, taken from BENCHMARK_BUCKET when "
-    "already stored there (set both together, in place of OASISLMF_VERSIONS)",
+    "already stored there (set both together, in place of OASISLMF_VERSIONS), or 'previous' for the OasisLMF "
+    "release before OASISLMF_TEST_VERSION",
     ""
 )
 OASISLMF_BRANCH = ("OASISLMF_BRANCH", "Branch of the OasisLMF repo to install from source, used in place of OASISLMF_VERSION", "")
@@ -53,11 +54,17 @@ OASISLMF_BRANCHES = ("OASISLMF_BRANCHES", "JSON array of OasisLMF branches to be
 OASISLMF_TEST_VERSION = (
     "OASISLMF_TEST_VERSION",
     "OasisLMF version a benchmark always runs live on EC2, even when BENCHMARK_BUCKET already stores it, and "
-    "compares against OASISLMF_BASELINE_VERSION (set both together, in place of OASISLMF_VERSIONS)",
+    "compares against OASISLMF_BASELINE_VERSION (set both together, in place of OASISLMF_VERSIONS), or 'latest' "
+    "for the newest OasisLMF release on PyPI",
     ""
 )
 OASISLMF_VERSION = ("OASISLMF_VERSION", "Specific version of OasisLMF to use", "")
-OASISLMF_VERSIONS = ("OASISLMF_VERSIONS", "JSON array of OasisLMF versions to benchmark, one target each, replaces OASISLMF_VERSION", [])
+OASISLMF_VERSIONS = (
+    "OASISLMF_VERSIONS",
+    "JSON array of OasisLMF versions to benchmark, one target each, replaces OASISLMF_VERSION; an entry of 'latest' "
+    "is the newest OasisLMF release on PyPI",
+    []
+)
 PATH_TO_DOCKER_COMPOSE = ("PATH_TO_DOCKER_COMPOSE", "Path from base of REPO_LOCATION to docker-compose file (or bash script)",
                           "./docker-compose.yml")
 PATH_TO_OASISLMF_JSON = ("PATH_TO_OASISLMF_JSON", "Path from base of REPO_LOCATION to OASISLMF.JSON file", "./oasislmf.json")
@@ -66,6 +73,13 @@ PUBLISH_BASELINE = (
     "When 'True' and BENCHMARK_BUCKET is set, publish each version target's output and performance metrics to "
     "BENCHMARK_BUCKET as that version's new stored baseline, and run every version live rather than reusing a "
     "stored one (branch targets are skipped, having no version to publish under)",
+    False
+)
+PUBLISH_TEST_VERSION = (
+    "PUBLISH_TEST_VERSION",
+    "When 'True' and BENCHMARK_BUCKET is set, publish the OASISLMF_TEST_VERSION run as that version's new stored "
+    "baseline once the benchmark has compared it, while the baseline version is still reused from BENCHMARK_BUCKET "
+    "as normal, so the next release can be compared against it without running this one again",
     False
 )
 PYTEST_ARGS = ("PYTEST_ARGS", "Arguments to pass to PyTest (already uses -vv flag)", "")
