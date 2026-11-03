@@ -64,12 +64,12 @@ def test_main_returns_structured_results_for_every_target(mock_model_main, mock_
     assert sorted(output["results"], key=lambda r: r["version"]) == [
         {
             "label": "PiWind-2.3.3", "model": "PiWind", "test": None, "version": "2.3.3", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "repeat_runtimes": [],
             "source": "live", "is_baseline": False,
         },
         {
             "label": "PiWind-2.4.9", "model": "PiWind", "test": None, "version": "2.4.9", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "repeat_runtimes": [],
             "source": "live", "is_baseline": False,
         },
     ]

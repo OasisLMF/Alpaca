@@ -45,11 +45,11 @@ def test_run_benchmark_targets_reports_success(mock_model_main, tmp_path):
     assert results == [
         {
             "label": "baseline", "model": "PiWind", "test": None, "version": "2.3.3", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "repeat_runtimes": [],
         },
         {
             "label": "comparison", "model": "PiWind", "test": None, "version": "2.4.9", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "repeat_runtimes": [],
         },
     ]
 
