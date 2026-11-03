@@ -7,7 +7,7 @@ from alpaca.benchmark.scripts import (
 from alpaca.benchmark.timing import find_result_file
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from botocore.exceptions import ClientError
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -96,6 +96,144 @@ def validate_s3_baseline_config(config):
         raise OasisAlpacaConfigError("PUBLISH_BASELINE requires BENCHMARK_BUCKET to be set")
     if not benchmark_versions(config):
         raise OasisAlpacaConfigError("PUBLISH_BASELINE requires OASISLMF_VERSIONS entries, as a branch has no version to publish under")
+
+
+def validate_baseline_as_of(config):
+    """Validate BASELINE_AS_OF before any EC2 spend.
+
+    Args:
+        config: Validated benchmark configuration dictionary.
+
+    Raises:
+        OasisAlpacaConfigError: If BASELINE_AS_OF is set without BENCHMARK_BUCKET or
+            OASISLMF_BASELINE_VERSION (it picks which stored baseline that version is compared
+            from, so means nothing for OASISLMF_VERSIONS peers), alongside PUBLISH_BASELINE
+            (which runs every version rather than reusing any stored one), or isn't a date or
+            history stamp, see parse_baseline_as_of.
+    """
+    as_of = config.get("BASELINE_AS_OF")
+    if not as_of:
+        return
+    parse_baseline_as_of(as_of)
+    if not config.get("BENCHMARK_BUCKET"):
+        raise OasisAlpacaConfigError("BASELINE_AS_OF requires BENCHMARK_BUCKET to be set")
+    if not config.get("OASISLMF_BASELINE_VERSION"):
+        raise OasisAlpacaConfigError("BASELINE_AS_OF requires OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION to be set")
+    if config.get("PUBLISH_BASELINE", False):
+        raise OasisAlpacaConfigError("Set either BASELINE_AS_OF or PUBLISH_BASELINE, not both")
+
+
+def parse_baseline_as_of(as_of):
+    """Turn a BASELINE_AS_OF value into the moment a baseline must have been published before.
+
+    Args:
+        as_of: A date, '2026-10-08', meaning the baseline that was current at the end of that day
+            (UTC), or a history stamp, '20261008-141200', meaning the one current at that second
+            (UTC), so a baseline's own history folder name picks exactly that baseline.
+
+    Returns:
+        datetime: The UTC cutoff; a baseline published strictly before it qualifies.
+
+    Raises:
+        OasisAlpacaConfigError: If as_of is neither. A day-first or two-digit-year date such as
+            '8/10/26' is ambiguous, so isn't guessed at.
+    """
+    for value_format, step in (("%Y-%m-%d", timedelta(days=1)), (HISTORY_TIMESTAMP_FORMAT, timedelta(seconds=1))):
+        try:
+            return datetime.strptime(as_of, value_format).replace(tzinfo=timezone.utc) + step
+        except ValueError:
+            continue
+    raise OasisAlpacaConfigError(
+        f"BASELINE_AS_OF must be a date (YYYY-MM-DD, e.g. 2026-10-08) or a history stamp (YYYYMMDD-HHMMSS, "
+        f"e.g. 20261008-141200), got '{as_of}'"
+    )
+
+
+def _baseline_snapshots(client, bucket, prefix):
+    """List every stored copy of a model/test/version's baseline: the current one and its history.
+
+    Args:
+        client: boto3 S3 client, see _s3_client.
+        bucket: Bucket name.
+        prefix: The baseline's key prefix, see _baseline_prefix.
+
+    Returns:
+        list[dict]: {'stamp', 'published_at'} per copy, oldest first. 'stamp' is the copy's
+            history folder name, or None for the current baseline, and 'published_at' is when
+            it was published (see _published_at for the current one). A history folder whose
+            name isn't a stamp wasn't made by _archive_baseline, so is left out.
+    """
+    snapshots = []
+    current = _current_baseline_keys(client, bucket, prefix)
+    if any(obj["Key"].startswith(f"{prefix}/output/") for obj in current):
+        snapshots.append({"stamp": None, "published_at": _published_at(client, bucket, prefix, current)})
+
+    history = f"{prefix}/{HISTORY_DIRECTORY}/"
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=history, Delimiter="/"):
+        for common_prefix in page.get("CommonPrefixes", []):
+            stamp = common_prefix["Prefix"][len(history):].rstrip("/")
+            try:
+                published_at = datetime.strptime(stamp, HISTORY_TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            snapshots.append({"stamp": stamp, "published_at": published_at})
+    return sorted(snapshots, key=lambda snapshot: snapshot["published_at"])
+
+
+def resolve_baseline_snapshots(config):
+    """Pick, for BASELINE_AS_OF, which stored copy of each OASISLMF_BASELINE_VERSION baseline to compare against.
+
+    The copy picked is the one that was current at BASELINE_AS_OF: the latest published before
+    its cutoff (see parse_baseline_as_of), whether that's the current baseline or one moved
+    into its history since. Every model and test needs one, since the point of BASELINE_AS_OF is
+    comparing against that dated run, so a gap is an error before any EC2 spend rather than the
+    baseline quietly being run live today.
+
+    Args:
+        config: Validated benchmark configuration dictionary, see validate_baseline_as_of.
+
+    Returns:
+        dict: (model, test, version) -> {'stamp', 'published_at'} (see _baseline_snapshots), one
+            per REPO_LOCATIONS and TESTS entry at OASISLMF_BASELINE_VERSION. Empty when
+            BASELINE_AS_OF isn't set.
+
+    Raises:
+        OasisAlpacaConfigError: If the bucket can't be read, or a model/test has no baseline
+            stored at all or none published by BASELINE_AS_OF (naming its earliest).
+    """
+    as_of = config.get("BASELINE_AS_OF")
+    if not as_of:
+        return {}
+
+    cutoff = parse_baseline_as_of(as_of)
+    version = config["OASISLMF_BASELINE_VERSION"]
+    client = _s3_client(config)
+    picked = {}
+    for model in (model_name_from_location(location) for location in benchmark_locations(config)):
+        for test in benchmark_tests(config):
+            bucket, prefix = _baseline_prefix(config["BENCHMARK_BUCKET"], model, test, version)
+            name = group_name(model, test)
+            try:
+                snapshots = _baseline_snapshots(client, bucket, prefix)
+            except ClientError as error:
+                raise OasisAlpacaConfigError(f"Could not read stored baselines from {config['BENCHMARK_BUCKET']}: {error}")
+            if not snapshots:
+                raise OasisAlpacaConfigError(
+                    f"BASELINE_AS_OF is set, but no {name} {version} baseline is stored at s3://{bucket}/{prefix}"
+                )
+            eligible = [snapshot for snapshot in snapshots if snapshot["published_at"] < cutoff]
+            if not eligible:
+                raise OasisAlpacaConfigError(
+                    f"No {name} {version} baseline was published by BASELINE_AS_OF {as_of}; the earliest stored was "
+                    f"published {snapshots[0]['published_at']:%Y-%m-%d %H:%M:%S} UTC"
+                )
+            picked[(model, test, version)] = eligible[-1]
+            logger.info(
+                f"Using the {name} {version} baseline published {eligible[-1]['published_at']:%Y-%m-%d %H:%M:%S} UTC "
+                f"(BASELINE_AS_OF {as_of})"
+            )
+    return picked
 
 
 def resolve_stored_versions(config):
@@ -306,14 +444,15 @@ def upload_baseline(bucket_uri, model, test, version, result_directory, config, 
     client.put_object(Bucket=bucket, Key=f"{prefix}/{PUBLISHED_FILENAME}", Body=json.dumps(published, indent=4).encode())
 
 
-def download_baseline(bucket_uri, model, test, version, local_directory, config):
+def download_baseline(bucket_uri, model, test, version, local_directory, config, stamp=None):
     """Download a model/test/version's stored baseline output and performance data locally.
 
     Downloads into a shape identical to a normal run's downloaded result directory
     (local_directory/output/*, local_directory/result.txt and, when one was published,
     local_directory/manifest.json), so find_output_dir, find_result_file,
-    resolve_model_runtime and read_manifest all work on it unmodified. Only the current
-    baseline is downloaded, never its history.
+    resolve_model_runtime and read_manifest all work on it unmodified. The current baseline is
+    downloaded unless stamp picks one of its history's copies instead (see
+    resolve_baseline_snapshots).
 
     Args:
         bucket_uri: S3 bucket URI the baseline is stored under.
@@ -322,6 +461,8 @@ def download_baseline(bucket_uri, model, test, version, local_directory, config)
         version: OasisLMF version to fetch the baseline for.
         local_directory: Local directory to download into.
         config: Validated benchmark configuration dictionary, for AWS session settings.
+        stamp: History folder name of the copy to download, e.g. '20261008-141200', or None for
+            the current baseline.
 
     Returns:
         Path: local_directory, for convenience.
@@ -330,6 +471,8 @@ def download_baseline(bucket_uri, model, test, version, local_directory, config)
         OasisAlpacaError: If no stored output exists for that model/test/version at that bucket.
     """
     bucket, prefix = _baseline_prefix(bucket_uri, model, test, version)
+    if stamp is not None:
+        prefix = f"{prefix}/{HISTORY_DIRECTORY}/{stamp}"
     client = _s3_client(config)
 
     local_directory = Path(local_directory)

@@ -11,7 +11,8 @@ from alpaca.benchmark.manifest import manifest_differences, read_manifest
 from alpaca.benchmark.comparison import build_comparison_reports, resolve_relative_tolerance
 from alpaca.benchmark.report import build_report_text, run_name, write_report
 from alpaca.benchmark.s3_baseline import (
-    download_baseline, resolve_stored_versions, upload_baseline, validate_s3_baseline_config
+    download_baseline, resolve_baseline_snapshots, resolve_stored_versions, upload_baseline, validate_baseline_as_of,
+    validate_s3_baseline_config
 )
 from alpaca.benchmark.timing import fastest_result, resolve_model_runtime, sort_results_by_speed
 from alpaca.config import load_config
@@ -31,7 +32,9 @@ def main(config_file):
     Each one runs as an ordinary 'alpaca model' run on its own EC2 instance (reusing
     alpaca.model.main.main for its EC2 lifecycle) unless its model, test and version already
     have a stored baseline in BENCHMARK_BUCKET, in which case that is downloaded instead of
-    paying for the run again.
+    paying for the run again. With BASELINE_AS_OF set, the OASISLMF_BASELINE_VERSION baseline
+    downloaded is the one that was current at that date, from the baseline's history when it's
+    since been replaced (see alpaca.benchmark.s3_baseline.resolve_baseline_snapshots).
 
     Comparison (both timing and output) is scoped per group, i.e. per model and test (see
     alpaca.benchmark.scripts.group_name): within a group's own targets, the fastest becomes
@@ -54,11 +57,15 @@ def main(config_file):
     config = load_config(config_file, REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK)
     relative_tolerance = resolve_relative_tolerance(config)
     validate_s3_baseline_config(config)
+    validate_baseline_as_of(config)
     validate_tests_config(config)
     validate_version_pair_config(config)
     tests_per_instance = validate_tests_per_instance(config)
 
-    targets = build_benchmark_targets(config, resolve_stored_versions(config))
+    snapshots = resolve_baseline_snapshots(config)
+    targets = build_benchmark_targets(config, resolve_stored_versions(config) | set(snapshots))
+    for target in targets:
+        target["snapshot"] = snapshots.get((target["model"], target["test"], target["run_config"].get("OASISLMF_VERSION")))
     plan = build_benchmark_plan(config, targets, tests_per_instance)
     print(format_benchmark_plan(plan))
 
@@ -110,7 +117,9 @@ def _download_stored_target(config, target):
     Returns:
         dict: A result in run_benchmark_targets' shape, with the version marked as an S3
             baseline and the runtime read from the stored performance metrics (None when the
-            baseline was published without any). A failed download is reported as a failed
+            baseline was published without any). A target with a BASELINE_AS_OF 'snapshot' has
+            that copy downloaded, and the result records when it was published as
+            'baseline_published_at'. A failed download is reported as a failed
             target rather than raised, so the targets that did run are still reported on.
     """
     result_directory = target["run_config"]["RESULT_DIRECTORY"]
@@ -124,9 +133,15 @@ def _download_stored_target(config, target):
         "total_runtime_seconds": None,
         "step_timings": {},
     }
+    snapshot = target.get("snapshot")
+    stamp = {}
+    if snapshot is not None:
+        result["baseline_published_at"] = snapshot["published_at"]
+        stamp = {"stamp": snapshot["stamp"]}
     try:
         download_baseline(
-            config["BENCHMARK_BUCKET"], target["model"], target["test"], target["version"], result_directory, config
+            config["BENCHMARK_BUCKET"], target["model"], target["test"], target["version"], result_directory, config,
+            **stamp
         )
     except Exception as error:
         logger.exception(f"Downloading the stored baseline for target '{target['label']}' failed")

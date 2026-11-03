@@ -1,5 +1,6 @@
 from alpaca.benchmark.s3_baseline import (
-    download_baseline, resolve_stored_versions, upload_baseline, validate_s3_baseline_config
+    download_baseline, parse_baseline_as_of, resolve_baseline_snapshots, resolve_stored_versions, upload_baseline,
+    validate_baseline_as_of, validate_s3_baseline_config
 )
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from datetime import datetime, timezone
@@ -567,3 +568,150 @@ def test_download_baseline_works_for_a_baseline_published_before_manifests(tmp_p
 
     assert not (local_directory / "manifest.json").exists()
     assert (local_directory / "output" / "summary.csv").is_file()
+
+
+AS_OF_CONFIG = {
+    **CONFIG, "BENCHMARK_BUCKET": "s3://alpaca-benchmark", "REPO_LOCATIONS": [PIWIND],
+    "OASISLMF_BASELINE_VERSION": "2.5.4", "OASISLMF_TEST_VERSION": "2.5.8",
+}
+
+
+def _publish_history(bucket, tmp_path, *published_ats):
+    """Publish a PiWind 2.5.4 baseline at each time in turn, so all but the last end up in its history."""
+    for index, published_at in enumerate(published_ats):
+        _publish_at(bucket, published_at, {"summary.csv": f"{published_at:%Y%m%d-%H%M%S}\n"}, tmp_path, f"run{index}")
+
+
+def test_parse_baseline_as_of_takes_a_date_as_the_end_of_that_day():
+    assert parse_baseline_as_of("2026-10-08") == datetime(2026, 10, 9, tzinfo=timezone.utc)
+
+
+def test_parse_baseline_as_of_takes_a_history_stamp_as_that_second():
+    assert parse_baseline_as_of("20261008-141200") == datetime(2026, 10, 8, 14, 12, 1, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("as_of", ["8/10/26", "08-10-2026", "2026-10-08T14:12:00", "yesterday"])
+def test_parse_baseline_as_of_rejects_anything_else(as_of):
+    with pytest.raises(OasisAlpacaConfigError, match="BASELINE_AS_OF must be a date"):
+        parse_baseline_as_of(as_of)
+
+
+def test_validate_baseline_as_of_accepts_it_unset():
+    validate_baseline_as_of({})
+
+
+def test_validate_baseline_as_of_accepts_a_baseline_and_test_pair():
+    validate_baseline_as_of({**AS_OF_CONFIG, "BASELINE_AS_OF": "2026-10-08"})
+
+
+@pytest.mark.parametrize("overrides, message", [
+    ({"BASELINE_AS_OF": "8/10/26"}, "must be a date"),
+    ({"BASELINE_AS_OF": "2026-10-08", "BENCHMARK_BUCKET": ""}, "requires BENCHMARK_BUCKET"),
+    ({"BASELINE_AS_OF": "2026-10-08", "OASISLMF_BASELINE_VERSION": ""}, "requires OASISLMF_BASELINE_VERSION"),
+    ({"BASELINE_AS_OF": "2026-10-08", "PUBLISH_BASELINE": True}, "not both"),
+])
+def test_validate_baseline_as_of_rejects_what_it_cannot_honour(overrides, message):
+    with pytest.raises(OasisAlpacaConfigError, match=message):
+        validate_baseline_as_of({**AS_OF_CONFIG, **overrides})
+
+
+def test_resolve_baseline_snapshots_returns_nothing_when_unset():
+    assert resolve_baseline_snapshots(AS_OF_CONFIG) == {}
+
+
+@mock_aws
+@pytest.mark.parametrize("as_of, stamp", [
+    ("2026-10-01", "20261001-000000"),
+    ("2026-10-02", "20261002-000000"),
+    ("2026-10-04", None),
+    ("20261002-000000", "20261002-000000"),
+    ("20261002-235959", "20261002-000000"),
+])
+def test_resolve_baseline_snapshots_picks_the_baseline_current_as_of_then(tmp_path, as_of, stamp):
+    """Three publishes on 1, 2 and 3 October: the first two end up in the history, the third is current."""
+    bucket = _make_bucket()
+    _publish_history(bucket, tmp_path, *(datetime(2026, 10, day, tzinfo=timezone.utc) for day in (1, 2, 3)))
+
+    picked = resolve_baseline_snapshots({**AS_OF_CONFIG, "BASELINE_AS_OF": as_of})
+
+    assert list(picked) == [("PiWind", None, "2.5.4")]
+    assert picked[("PiWind", None, "2.5.4")]["stamp"] == stamp
+
+
+@mock_aws
+def test_resolve_baseline_snapshots_takes_the_latest_of_several_publishes_that_day(tmp_path):
+    bucket = _make_bucket()
+    _publish_history(
+        bucket, tmp_path, datetime(2026, 10, 8, 9, tzinfo=timezone.utc), datetime(2026, 10, 8, 17, tzinfo=timezone.utc),
+        datetime(2026, 10, 9, tzinfo=timezone.utc),
+    )
+
+    picked = resolve_baseline_snapshots({**AS_OF_CONFIG, "BASELINE_AS_OF": "2026-10-08"})
+
+    assert picked[("PiWind", None, "2.5.4")] == {
+        "stamp": "20261008-170000", "published_at": datetime(2026, 10, 8, 17, tzinfo=timezone.utc),
+    }
+
+
+@mock_aws
+def test_resolve_baseline_snapshots_names_the_earliest_when_nothing_was_published_by_then(tmp_path):
+    bucket = _make_bucket()
+    _publish_history(bucket, tmp_path, datetime(2026, 10, 6, 14, 12, tzinfo=timezone.utc))
+
+    with pytest.raises(OasisAlpacaConfigError, match="No PiWind 2.5.4 baseline was published by BASELINE_AS_OF 2026-10-05; "
+                                                     "the earliest stored was published 2026-10-06 14:12:00 UTC"):
+        resolve_baseline_snapshots({**AS_OF_CONFIG, "BASELINE_AS_OF": "2026-10-05"})
+
+
+@mock_aws
+def test_resolve_baseline_snapshots_raises_when_no_baseline_is_stored():
+    _make_bucket()
+
+    with pytest.raises(OasisAlpacaConfigError, match="no PiWind 2.5.4 baseline is stored"):
+        resolve_baseline_snapshots({**AS_OF_CONFIG, "BASELINE_AS_OF": "2026-10-05"})
+
+
+@mock_aws
+def test_resolve_baseline_snapshots_names_a_bucket_it_cannot_read():
+    with pytest.raises(OasisAlpacaConfigError, match="Could not read stored baselines from s3://alpaca-benchmark"):
+        resolve_baseline_snapshots({**AS_OF_CONFIG, "BASELINE_AS_OF": "2026-10-05"})
+
+
+@mock_aws
+def test_resolve_baseline_snapshots_ignores_a_history_folder_it_did_not_make(tmp_path):
+    bucket = _make_bucket()
+    _publish_history(bucket, tmp_path, datetime(2026, 10, 6, tzinfo=timezone.utc))
+    boto3.client("s3", region_name=REGION).put_object(Bucket=bucket, Key="PiWind/2.5.4/history/notes/readme.txt", Body=b"x")
+
+    picked = resolve_baseline_snapshots({**AS_OF_CONFIG, "BASELINE_AS_OF": "2026-10-06"})
+
+    assert picked[("PiWind", None, "2.5.4")]["stamp"] is None
+
+
+@mock_aws
+def test_resolve_baseline_snapshots_picks_per_test_and_never_the_test_version(tmp_path):
+    bucket = _make_bucket()
+    for test, day in (("test_1", 1), ("test_2", 2)):
+        run_directory = _write_run_directory(tmp_path / test, {"summary.csv": "a\n"})
+        with mock.patch("alpaca.benchmark.s3_baseline.datetime") as fake_datetime:
+            fake_datetime.now.return_value = datetime(2026, 10, day, tzinfo=timezone.utc)
+            upload_baseline(f"s3://{bucket}", "PiWind", test, "2.5.4", run_directory, CONFIG)
+            upload_baseline(f"s3://{bucket}", "PiWind", test, "2.5.8", run_directory, CONFIG)
+
+    picked = resolve_baseline_snapshots({
+        **AS_OF_CONFIG, "PATH_TO_OASISLMF_JSON": "", "TESTS": ["test_1", "test_2"], "BASELINE_AS_OF": "2026-10-05",
+    })
+
+    assert sorted(picked) == [("PiWind", "test_1", "2.5.4"), ("PiWind", "test_2", "2.5.4")]
+
+
+@mock_aws
+def test_download_baseline_downloads_a_copy_from_the_history(tmp_path):
+    bucket = _make_bucket()
+    _publish_history(bucket, tmp_path, datetime(2026, 10, 1, tzinfo=timezone.utc), datetime(2026, 10, 2, tzinfo=timezone.utc))
+
+    local_directory = download_baseline(
+        f"s3://{bucket}", "PiWind", None, "2.5.4", tmp_path / "downloaded", CONFIG, stamp="20261001-000000"
+    )
+
+    assert (local_directory / "output" / "summary.csv").read_text() == "20261001-000000\n"

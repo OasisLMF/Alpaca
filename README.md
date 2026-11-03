@@ -158,6 +158,7 @@ loads the config:
 | `OASISLMF_BRANCHES` | `[]` | benchmark | JSON array of branches to benchmark, one target each |
 | `OASISLMF_BASELINE_VERSION` | *(none)* | benchmark | Version to compare against, reused from `BENCHMARK_BUCKET` when stored; set with `OASISLMF_TEST_VERSION` in place of `OASISLMF_VERSIONS` — see [Baseline and test versions](#baseline-and-test-versions) |
 | `OASISLMF_TEST_VERSION` | *(none)* | benchmark | Version that always runs live, even when stored; set with `OASISLMF_BASELINE_VERSION` |
+| `BASELINE_AS_OF` | *(latest)* | benchmark | Compare against the `OASISLMF_BASELINE_VERSION` baseline that was current on a date (`2026-10-08`) or at a history stamp (`20261008-141200`), UTC — see [Comparing against an earlier baseline](#comparing-against-an-earlier-baseline) |
 | `TESTS` | `[]` | benchmark | JSON array of test names, each run from `tests/<name>/oasislmf.json` — see [Tests](#tests) |
 | `TESTS_PER_INSTANCE` | `separate` | benchmark | `separate` gives every test its own instance; `shared` runs a model's tests in turn on one instance per version — see [Sharing an instance between tests](#sharing-an-instance-between-tests) |
 | `EXECUTION_MODE` | `parallel` | benchmark | `parallel` (up to eight instances at once) or `sequential` |
@@ -360,12 +361,39 @@ PiWind/test_1/2.5.7/history/20261006-141200/output/...      # what it replaced
 PiWind/test_1/2.5.7/history/20261006-141200/benchmark_report.txt
 ```
 
-Only the current result is ever reused or downloaded; the history is there to read, or to
+Benchmarks reuse the current result unless `BASELINE_AS_OF` picks an older one (see below); the history is there to read, or to
 copy back if a republish turns out to be wrong. Nothing of the old result is left in the
 current one, so a file the new run doesn't produce can't get mixed in with it. If the move
 fails, nothing is published and the stored result is left as it was. Results stored before
 this have no `published.json` or report, and are named after when their files were last
 written.
+
+### Comparing against an earlier baseline
+
+With a baseline/test pair, `BASELINE_AS_OF` compares the test version against the baseline
+as it was stored on a given date, rather than the latest one. It picks the result that was
+current at the end of that day (UTC): the latest one published on or before it, whether
+that's still the current result or has since moved into `history/`.
+
+```json
+"OASISLMF_BASELINE_VERSION": "2.5.7",
+"OASISLMF_TEST_VERSION": "2.5.8",
+"BENCHMARK_BUCKET": "s3://my-benchmark-bucket",
+"BASELINE_AS_OF": "2026-10-08"
+```
+
+* Write the date as `YYYY-MM-DD`. A date like `8/10/26` is rejected, as it's ambiguous.
+* To pick one exact result, give its history folder name instead, e.g. `20261006-141200`.
+* Leave it unset to use the latest baseline, as before.
+* It only applies to `OASISLMF_BASELINE_VERSION`; the test version always runs live. It needs
+  `BENCHMARK_BUCKET` and can't be combined with `PUBLISH_BASELINE`.
+* If a model or test has no result stored on or before that date, the benchmark stops before
+  launching anything and says when the earliest stored one was published. History is only
+  kept from the release that added it, so results replaced before then can't be picked.
+
+The plan and the report show which result was used, e.g.
+`PiWind 2.5.7 (baseline, from S3, 2026-10-06)`. The instance-type check still applies, so an
+older result that ran on a different instance type is flagged as not like for like.
 
 ### Reading the report
 

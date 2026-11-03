@@ -2,6 +2,7 @@ from alpaca.benchmark.main import benchmark_failed, main
 from alpaca.benchmark.report import run_name
 from alpaca.benchmark.s3_baseline import upload_baseline
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
+from datetime import datetime, timezone
 from moto import mock_aws
 from pathlib import Path
 from unittest import mock
@@ -1047,3 +1048,42 @@ def test_main_runs_shared_tests_on_one_instance_per_version(mock_model_main, moc
     mock_model_main.assert_not_called()
     assert len(output["results"]) == 6
     assert "EC2 instances:\n2 (tests share an instance per version)" in capsys.readouterr().out
+
+
+@mock_aws
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_compares_against_the_baseline_as_of_a_date(mock_model_main, tmp_path, capsys):
+    """The baseline published on 6 October was replaced on 14 October; BASELINE_AS_OF picks the
+    6 October one back out of its history, and the plan and report say which it was.
+    """
+    boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="alpaca-benchmark")
+    for day, content in ((6, "a,b\n1,2\n"), (14, "a,b\n9,9\n")):
+        published = tmp_path / f"published-{day}"
+        _write_output_files(published, {"summary.csv": content})
+        with mock.patch("alpaca.benchmark.s3_baseline.datetime") as fake_datetime:
+            fake_datetime.now.return_value = datetime(2026, 10, day, 14, 12, tzinfo=timezone.utc)
+            fake_datetime.fromisoformat = datetime.fromisoformat
+            upload_baseline("s3://alpaca-benchmark", "PiWind", None, "2.5.7", published, {"AWS_REGION": "us-east-1"})
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "PiWind-2.5.8", {"summary.csv": "a,b\n1,2\n"})
+    config_path = _write_config(tmp_path, {
+        "AWS_REGION": "us-east-1", "BENCHMARK_BUCKET": "s3://alpaca-benchmark", "RESULT_DIRECTORY": str(results_dir),
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+        "BASELINE_AS_OF": "2026-10-08",
+    })
+
+    output = main(config_path)
+
+    assert [call.args[0]["OASISLMF_VERSION"] for call in mock_model_main.call_args_list] == ["2.5.8"]
+    assert [run_name(r) for r in output["results"]] == ["PiWind 2.5.7 (baseline, from S3, 2026-10-06)", "PiWind 2.5.8"]
+    assert _group_for(output, "PiWind")["report"]["status"] == "pass"
+    assert "- PiWind: OasisLMF 2.5.7 (baseline, from S3, published 2026-10-06 14:12 UTC)" in capsys.readouterr().out
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_raises_on_baseline_as_of_without_a_version_pair_before_running_anything(mock_model_main, tmp_path):
+    config_path = _write_config(tmp_path, {"BENCHMARK_BUCKET": "s3://alpaca-benchmark", "BASELINE_AS_OF": "2026-10-08"})
+
+    with pytest.raises(OasisAlpacaConfigError, match="requires OASISLMF_BASELINE_VERSION"):
+        main(config_path)
+    mock_model_main.assert_not_called()
