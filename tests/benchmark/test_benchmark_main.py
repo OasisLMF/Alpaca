@@ -1120,8 +1120,8 @@ def test_main_compares_the_latest_release_with_the_previous_one(mock_model_main,
 @mock_aws
 @mock.patch("alpaca.benchmark.executor.model_main")
 def test_main_publishes_only_the_test_version_and_reuses_the_stored_baseline(mock_model_main, tmp_path):
-    """The monthly run: the stored 2.5.7 baseline is reused, 2.5.8 runs live, and only 2.5.8 is
-    published, so next month's release can be compared against it without running it again.
+    """The release-to-release run: the stored 2.5.7 baseline is reused, 2.5.8 runs live, and only
+    2.5.8 is published, so the next release can be compared against it without running it again.
     """
     boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="alpaca-benchmark")
     published = tmp_path / "published"
