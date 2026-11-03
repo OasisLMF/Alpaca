@@ -1,3 +1,4 @@
+from alpaca.benchmark.timing import outside_repeats
 from alpaca.inputs import AMI_ID, AWS_REGION, INSTANCE_TYPE
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,7 +22,7 @@ INPUT_NAMES = {
 }
 
 
-def build_manifest(target, result_directory, created_at=None, tests_per_instance="separate"):
+def build_manifest(target, result_directory, created_at=None, tests_per_instance="separate", repeats=1):
     """Describe the conditions a benchmark target ran under, for checking like for like later.
 
     Two runs are only comparable when they ran on the same kind of instance from the same
@@ -36,6 +37,7 @@ def build_manifest(target, result_directory, created_at=None, tests_per_instance
         created_at: When the run happened, as an ISO 8601 string. Defaults to now (UTC).
         tests_per_instance: 'separate' when the run had its instance to itself, 'shared' when
             it ran in turn with other tests on one instance (see TESTS_PER_INSTANCE).
+        repeats: How many times the run was repeated on its instance (see REPEATS).
 
     Returns:
         dict: The manifest. 'inputs' is empty when the instance never got as far as writing
@@ -53,22 +55,24 @@ def build_manifest(target, result_directory, created_at=None, tests_per_instance
         "ami_id": run_config.get(AMI_ID[0]) or AMI_ID[2],
         "aws_region": run_config.get(AWS_REGION[0]) or AWS_REGION[2],
         "tests_per_instance": tests_per_instance,
+        "repeats": repeats,
         "inputs": _read_input_checksums(result_directory),
     }
 
 
-def write_manifest(target, result_directory, tests_per_instance="separate"):
+def write_manifest(target, result_directory, tests_per_instance="separate", repeats=1):
     """Build a target's manifest and save it as manifest.json in its result directory.
 
     Args:
         target: The target, as returned by alpaca.benchmark.scripts.build_benchmark_targets.
         result_directory: Local directory the target's results were downloaded to.
         tests_per_instance: 'separate' or 'shared', see build_manifest.
+        repeats: How many times the run was repeated, see build_manifest.
 
     Returns:
         dict: The manifest that was written (see build_manifest).
     """
-    manifest = build_manifest(target, result_directory, tests_per_instance=tests_per_instance)
+    manifest = build_manifest(target, result_directory, tests_per_instance=tests_per_instance, repeats=repeats)
     path = Path(result_directory) / MANIFEST_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, indent=4) + "\n")
@@ -96,8 +100,10 @@ def read_manifest(result_directory):
 
 
 def _read_input_checksums(result_directory):
-    """Read the input checksums an instance wrote, wherever under the result directory they landed."""
-    matches = sorted(Path(result_directory).rglob(INPUT_CHECKSUMS_FILENAME))
+    """Read the input checksums an instance wrote, wherever under the result directory they landed (first run only)."""
+    matches = sorted(
+        path for path in Path(result_directory).rglob(INPUT_CHECKSUMS_FILENAME) if outside_repeats(path, result_directory)
+    )
     if not matches:
         return {}
     try:
@@ -137,6 +143,10 @@ def manifest_differences(reference, other, reference_name, other_name):
     other_sharing = other.get("tests_per_instance") or "separate"
     if reference_sharing != other_sharing:
         notes.append(f"tests per instance differs: {reference_sharing} vs {other_sharing}")
+    # Manifests from before REPEATS existed were all single runs.
+    reference_repeats, other_repeats = reference.get("repeats") or 1, other.get("repeats") or 1
+    if reference_repeats != other_repeats:
+        notes.append(f"repeats differ: {reference_repeats} vs {other_repeats}")
 
     reference_inputs, other_inputs = reference.get("inputs") or {}, other.get("inputs") or {}
     if not reference_inputs or not other_inputs:

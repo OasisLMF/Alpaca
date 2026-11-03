@@ -4,7 +4,7 @@ from alpaca.model.utils import OPTIONAL_CONFIG_MODEL, REQUIRED_CONFIG_MODEL
 from alpaca.benchmark.failure import describe_failure, missing_inputs, write_failure
 from alpaca.benchmark.manifest import write_manifest
 from alpaca.benchmark.scripts import group_name
-from alpaca.benchmark.timing import resolve_model_runtime
+from alpaca.benchmark.timing import REPEATS_DIRECTORY, resolve_repeat_timings
 from alpaca.logging_context import log_target
 from alpaca.remote_controller import RemoteController
 
@@ -25,7 +25,8 @@ def _finish_target(run_config_entry, error, total_runtime_seconds, tests_per_ins
     is saved next to its results (see alpaca.benchmark.manifest), so it can be checked for like
     for like. A failed run also gets a failure.txt there (see alpaca.benchmark.failure): which
     stage failed, the telling error line, any input file its oasislmf.json pointed at that
-    wasn't there, and the failed command's full output.
+    wasn't there, and the failed command's full output. A repeated run's runtime and step
+    timings are the medians across its repeats (see resolve_repeat_timings).
 
     Args:
         run_config_entry: One entry as returned by build_benchmark_targets.
@@ -39,13 +40,13 @@ def _finish_target(run_config_entry, error, total_runtime_seconds, tests_per_ins
     result_directory = run_config_entry["run_config"]["RESULT_DIRECTORY"]
     manifest = None
     try:
-        manifest = write_manifest(run_config_entry, result_directory, tests_per_instance)
+        manifest = write_manifest(run_config_entry, result_directory, tests_per_instance, run_config_entry.get("repeats", 1))
     except Exception:
         logger.exception(f"Could not write the manifest for benchmark target '{run_config_entry['label']}'")
 
-    runtime_seconds, step_timings = total_runtime_seconds, {}
+    runtime_seconds, step_timings, repeat_runtimes = total_runtime_seconds, {}, []
     if error is None:
-        model_runtime_seconds, step_timings = resolve_model_runtime(result_directory, total_runtime_seconds)
+        model_runtime_seconds, step_timings, repeat_runtimes = resolve_repeat_timings(result_directory, total_runtime_seconds)
         runtime_seconds = round(model_runtime_seconds)
 
     result = {
@@ -57,6 +58,7 @@ def _finish_target(run_config_entry, error, total_runtime_seconds, tests_per_ins
         "runtime_seconds": runtime_seconds,
         "total_runtime_seconds": total_runtime_seconds,
         "step_timings": step_timings,
+        "repeat_runtimes": repeat_runtimes,
     }
     if error is not None:
         failure = describe_failure(error)
@@ -91,7 +93,9 @@ def _run_target(run_config_entry):
 
     Returns:
         dict: {'label', 'model', 'test', 'version', 'status', 'runtime_seconds',
-            'total_runtime_seconds', 'step_timings'}, plus 'failure' for a failed run.
+            'total_runtime_seconds', 'step_timings', 'repeat_runtimes'}, plus 'failure' for a
+            failed run. 'repeat_runtimes' is each repeat's model runtime (one entry for a run
+            that wasn't repeated, none for a failed run).
             'label' is the target's own label, so a result can be traced back to the target
             that produced it. 'status' is 'success' unless the run raises, in which case it is
             'failed', the exception is logged, and 'failure' holds its 'stage', 'message',
@@ -113,18 +117,21 @@ def _run_target(run_config_entry):
 
 
 def _run_shared_instance(entries):
-    """Run several tests of one model at one OasisLMF install, in turn, on a single instance.
+    """Run one or more targets of one model at one OasisLMF install, in turn, on a single instance.
 
-    OasisLMF is installed and the model pulled once, then each test runs from its own
+    OasisLMF is installed and the model pulled once, then each target runs from its own
     directory on the instance (see alpaca.model.commands.shared_test_commands) and is
-    downloaded to its own target's RESULT_DIRECTORY, so from there on each test is a result
-    like any other: timed, diffed, published and given a manifest on its own. A test that fails
-    doesn't stop the ones after it. If the instance itself can't be set up, every test on it
-    is reported as failed with that error.
+    downloaded to its own target's RESULT_DIRECTORY, so from there on each one is a result
+    like any other: timed, diffed, published and given a manifest on its own. This is how
+    TESTS_PER_INSTANCE 'shared' runs a model's tests, and how a target with REPEATS runs all of
+    its repeats on its one instance (see _run_shared_test). A target that fails doesn't stop
+    the ones after it. If the instance itself can't be set up, every target on it is reported
+    as failed with that error.
 
     Args:
         entries: The targets sharing the instance, as returned by build_benchmark_targets: one
-            model, one OasisLMF version or branch, a different test each.
+            model, one OasisLMF version or branch, a different test each (or a single target
+            of its own, when it's only on this path for its repeats).
 
     Returns:
         list[dict]: One result per entry, in entries order (see _run_target).
@@ -132,7 +139,10 @@ def _run_shared_instance(entries):
     first = entries[0]
     results = {}
     start = time.monotonic()
-    with log_target(f"{first['model']} {first['version']} (shared instance)"):
+    sharing = first.get("tests_per_instance", "separate")
+    instance_name = f"{first['model']} {first['version']} (shared instance)" if sharing == "shared" else \
+        f"{group_name(first['model'], first['test'])} {first['version']}"
+    with log_target(instance_name):
         try:
             with RemoteController(first["run_config"], REQUIRED_CONFIG_MODEL, OPTIONAL_CONFIG_MODEL) as controller:
                 controller.upload_model(first["run_config"]["REPO_LOCATION"])
@@ -142,37 +152,54 @@ def _run_shared_instance(entries):
             logger.exception(f"Shared instance for {first['model']} {first['version']} failed")
             for entry in entries:
                 if entry["label"] not in results:
-                    results[entry["label"]] = _finish_target(entry, error, round(time.monotonic() - start), "shared")
+                    results[entry["label"]] = _finish_target(entry, error, round(time.monotonic() - start), sharing)
     return [results[entry["label"]] for entry in entries]
 
 
 def _run_shared_test(controller, entry):
-    """Run one test on a shared instance and download its results, without raising.
+    """Run one target, REPEATS times over, on an instance that's already set up, without raising.
+
+    Each repeat runs from its own directory on the instance with the file and compiled-code
+    caches cleared first (see shared_test_commands), so each one starts like a run on a fresh
+    instance. The first repeat downloads to the target's RESULT_DIRECTORY, exactly where a run
+    that isn't repeated goes, and each later one to 'repeats/<number>/' under it (see
+    alpaca.benchmark.timing.repeat_directories). A repeat that fails ends the target there,
+    as a failed run.
 
     Args:
-        controller: The shared instance's RemoteController, already set up with the model.
-        entry: The test's target, as returned by build_benchmark_targets.
+        controller: The instance's RemoteController, already set up with the model.
+        entry: The target, as returned by build_benchmark_targets, with 'repeats' set by
+            run_benchmark_targets.
 
     Returns:
-        dict: The test's result (see _run_target).
+        dict: The target's result (see _run_target).
     """
-    run_directory = f"{SHARED_RUNS_DIRECTORY}/{entry['test']}"
+    base_directory = f"{SHARED_RUNS_DIRECTORY}/{entry['test'] or 'run'}"
+    repeats = entry.get("repeats", 1)
+    result_directory = entry["run_config"]["RESULT_DIRECTORY"]
     start = time.monotonic()
     error = None
     with log_target(f"{group_name(entry['model'], entry['test'])} {entry['version']}"):
-        try:
-            controller.run_commands(
-                shared_test_commands(entry["run_config"]["PATH_TO_OASISLMF_JSON"], run_directory), log_condition, check=True
-            )
-        except Exception as raised:
-            error = raised
-            logger.exception(f"Benchmark target '{entry['label']}' failed")
-        try:
-            controller.download_results(f"/home/ubuntu/{run_directory}/runs", entry["run_config"]["RESULT_DIRECTORY"])
-        except Exception as raised:
-            logger.exception(f"Downloading the results of benchmark target '{entry['label']}' failed")
-            error = error or raised
-        return _finish_target(entry, error, round(time.monotonic() - start), "shared")
+        for repeat in range(1, repeats + 1):
+            run_directory = base_directory if repeat == 1 else f"{base_directory}/{REPEATS_DIRECTORY}/{repeat}"
+            local_directory = result_directory if repeat == 1 else f"{result_directory}/{REPEATS_DIRECTORY}/{repeat}"
+            if repeats > 1:
+                logger.info(f"Repeat {repeat} of {repeats}")
+            try:
+                controller.run_commands(
+                    shared_test_commands(entry["run_config"]["PATH_TO_OASISLMF_JSON"], run_directory), log_condition, check=True
+                )
+            except Exception as raised:
+                error = raised
+                logger.exception(f"Benchmark target '{entry['label']}' failed")
+            try:
+                controller.download_results(f"/home/ubuntu/{run_directory}/runs", local_directory)
+            except Exception as raised:
+                logger.exception(f"Downloading the results of benchmark target '{entry['label']}' failed")
+                error = error or raised
+            if error is not None:
+                break
+        return _finish_target(entry, error, round(time.monotonic() - start), entry.get("tests_per_instance", "separate"))
 
 
 def instance_groups(run_configs, tests_per_instance="separate"):
@@ -198,13 +225,14 @@ def instance_groups(run_configs, tests_per_instance="separate"):
 
 
 def _run_instance(group):
-    """Run one instance's worth of targets: a target of its own, or several sharing it."""
-    if len(group) == 1 and group[0].get("tests_per_instance", "separate") != "shared":
-        return [_run_target(group[0])]
+    """Run one instance's worth of targets: a target of its own, or several sharing it, or one repeated."""
+    single = group[0]
+    if len(group) == 1 and single.get("tests_per_instance", "separate") != "shared" and single.get("repeats", 1) == 1:
+        return [_run_target(single)]
     return _run_shared_instance(group)
 
 
-def run_benchmark_targets(run_configs, execution_mode="parallel", tests_per_instance="separate"):
+def run_benchmark_targets(run_configs, execution_mode="parallel", tests_per_instance="separate", repeats=1):
     """Run every benchmark target's model execution and collect its result.
 
     Args:
@@ -216,12 +244,16 @@ def run_benchmark_targets(run_configs, execution_mode="parallel", tests_per_inst
         tests_per_instance: 'separate' (the default) runs every target on its own instance;
             'shared' runs a model's tests at one OasisLMF version in turn on one instance (see
             instance_groups and _run_shared_instance).
+        repeats: How many times each target runs on its instance (see REPEATS and
+            _run_shared_test). 1, the default, runs each target once, exactly as before.
 
     Returns:
         list[dict]: One result per target, in run_configs order, each with 'label', 'model', 'test',
             'version', 'status', 'runtime_seconds', 'total_runtime_seconds' and
             'step_timings', plus 'failure' for a failed one (see _run_target).
     """
+    for entry in run_configs:
+        entry["repeats"] = repeats
     groups = instance_groups(run_configs, tests_per_instance)
     if tests_per_instance == "shared":
         for group in groups:

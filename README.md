@@ -161,6 +161,7 @@ loads the config:
 | `BASELINE_AS_OF` | *(latest)* | benchmark | Compare against the `OASISLMF_BASELINE_VERSION` baseline that was current on a date (`2026-10-08`) or at a history stamp (`20261008-141200`), UTC — see [Comparing against an earlier baseline](#comparing-against-an-earlier-baseline) |
 | `TESTS` | `[]` | benchmark | JSON array of test names, each run from `tests/<name>/oasislmf.json` — see [Tests](#tests) |
 | `TESTS_PER_INSTANCE` | `separate` | benchmark | `separate` gives every test its own instance; `shared` runs a model's tests in turn on one instance per version — see [Sharing an instance between tests](#sharing-an-instance-between-tests) |
+| `REPEATS` | `1` | benchmark | Run each live target this many times (1–10) on its instance and report medians and ranges — see [Repeating runs](#repeating-runs) |
 | `EXECUTION_MODE` | `parallel` | benchmark | `parallel` (up to eight instances at once) or `sequential` |
 | `COMPARISON_TOLERANCE` | `0.005` | benchmark | Relative tolerance for numeric cells when diffing outputs (0.005 = 0.5%) |
 | `BENCHMARK_BUCKET` | *(none)* | benchmark | `s3://bucket` holding versioned baseline outputs and metrics |
@@ -444,6 +445,30 @@ compared, so the next release can be compared against it without running it agai
   `PUBLISH_BASELINE`.
 * It needs `BENCHMARK_BUCKET` and the baseline/test pair, and can't be combined with
   `PUBLISH_BASELINE`.
+
+### Repeating runs
+
+Run times on cloud instances vary from run to run, so one run can't tell a real slowdown from
+noise. `"REPEATS": 3` runs each live target three times on its instance and reports the median:
+
+```
+- PiWind 2.5.8 (baseline): success (420s median of 3, range 394-503s)
+- PiWind 2.5.9: success (466s median of 3, range 455-471s, +11.0% vs baseline, within run-to-run variation)
+```
+
+* The instance is set up once (OasisLMF installed, model pulled), then each repeat runs in
+  turn with the file and compiled-code caches cleared, so each starts like a fresh instance.
+  It costs more instance time, not more instances.
+* Every step's time in the timing table is the median of the repeats.
+* A change is marked **within run-to-run variation** when the two runs' ranges overlap. A
+  stored baseline published without repeats counts as a single run.
+* Each repeat's output is compared with the first run's. A repeat that differs is listed
+  under "Repeat outputs" and fails the benchmark, like an output change between versions.
+* The first run's results land where a single run's always do, and the later repeats under
+  `repeats/2/`, `repeats/3/` beside them. Publishing stores every repeat's timings with the
+  baseline (only the first run's output), so a benchmark reusing it gets its median and range.
+* It applies to live targets only; a stored baseline keeps whatever it was published with. The
+  like-for-like check flags runs with different repeats. The default, `1`, runs once as before.
 
 ### Reading the report
 

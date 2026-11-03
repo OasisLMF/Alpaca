@@ -91,6 +91,12 @@ REPO_LOCATIONS = (
     "(benchmark mode)",
     ["https://github.com/OasisLMF/OasisPiWind"]
 )
+REPEATS = (
+    "REPEATS",
+    "How many times a benchmark runs each live target on its instance (1 to 10), reporting the median of each "
+    "step's time and the range between repeats, so a real change can be told from run-to-run variation",
+    1
+)
 RESULT_DIRECTORY = ("RESULT_DIRECTORY", "Where to store results, s3 (s3://bucket) or local (./path/to/local)", "./runs")
 SECURITY_GROUP_ID = ("SECURITY_GROUP_ID", "Security group id of EC2 instance", "MySecurityGroup")
 SSH_MAX_RETRIES = ("SSH_MAX_RETRIES", "Maximum number of SSH-over-SSM connection attempts before timeout", 60)

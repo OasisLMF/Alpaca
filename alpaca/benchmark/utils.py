@@ -3,7 +3,7 @@ from alpaca.inputs import (
     AMI_ID, SECURITY_GROUP_ID, SUBNET_ID, IAM_INSTANCE_PROFILE, REPO_LOCATIONS, PATH_TO_OASISLMF_JSON, AWS_REGION,
     BASELINE_AS_OF, BENCHMARK_BUCKET, COMPARISON_TOLERANCE, OASISLMF_VERSIONS, OASISLMF_BRANCHES, INSTANCE_TYPE, DISK_GB, LOG_LEVEL,
     EC2_NAME, EXECUTION_MODE, MAX_LIFETIME_HOURS, PUBLISH_BASELINE, PUBLISH_TEST_VERSION, SSH_MAX_RETRIES, AWS_PROFILE, DEBUG,
-    RESULT_DIRECTORY, TESTS, OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION, TESTS_PER_INSTANCE
+    REPEATS, RESULT_DIRECTORY, TESTS, OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION, TESTS_PER_INSTANCE
 )
 
 
@@ -14,7 +14,7 @@ OPTIONAL_CONFIG_BENCHMARK = [
     AWS_REGION, BENCHMARK_BUCKET, COMPARISON_TOLERANCE, OASISLMF_VERSIONS, OASISLMF_BRANCHES, INSTANCE_TYPE,
     DISK_GB, LOG_LEVEL, EC2_NAME, EXECUTION_MODE, MAX_LIFETIME_HOURS, PATH_TO_OASISLMF_JSON, PUBLISH_BASELINE,
     SSH_MAX_RETRIES, AWS_PROFILE, DEBUG, RESULT_DIRECTORY, TESTS, OASISLMF_BASELINE_VERSION, OASISLMF_TEST_VERSION,
-    TESTS_PER_INSTANCE, BASELINE_AS_OF, PUBLISH_TEST_VERSION
+    TESTS_PER_INSTANCE, BASELINE_AS_OF, PUBLISH_TEST_VERSION, REPEATS
 ]
 
 
@@ -73,6 +73,29 @@ def validate_version_pair_config(config):
         )
     if baseline == test:
         raise OasisAlpacaConfigError(f"OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION are both '{baseline}'")
+
+
+MAX_REPEATS = 10
+
+
+def validate_repeats(config):
+    """Validate REPEATS before any EC2 spend.
+
+    Args:
+        config: Validated benchmark configuration dictionary. REPEATS is already a whole
+            number by now (see alpaca.config.load_config).
+
+    Returns:
+        int: How many times each live target runs, 1 (the default) to MAX_REPEATS.
+
+    Raises:
+        OasisAlpacaConfigError: If it's below 1 or above MAX_REPEATS, which would keep an
+            instance running for many times as long as one run takes.
+    """
+    repeats = config.get("REPEATS", 1)
+    if not 1 <= repeats <= MAX_REPEATS:
+        raise OasisAlpacaConfigError(f"REPEATS must be between 1 and {MAX_REPEATS}, got {repeats}")
+    return repeats
 
 
 VALID_TESTS_PER_INSTANCE = ("separate", "shared")

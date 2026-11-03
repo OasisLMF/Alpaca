@@ -61,14 +61,51 @@ def _ordered(group_results):
 
 
 def _runtime_change(result, baseline):
-    """Describe a run's runtime change from the baseline, e.g. '-38.8% vs baseline', or '' when unknown."""
+    """Describe a run's runtime change from the baseline, e.g. '-38.8% vs baseline', or '' when unknown.
+
+    When either run was repeated (see REPEATS), a change whose two runs' ranges of repeat
+    runtimes overlap is marked as within run-to-run variation, since the repeats show a
+    difference that size can happen without anything having changed.
+    """
     if baseline is None or result is baseline or baseline["status"] != "success" or result["status"] != "success":
         return ""
     baseline_seconds, result_seconds = _precise_runtime(baseline), _precise_runtime(result)
     if not baseline_seconds or result_seconds is None:
         return ""
     change = (result_seconds - baseline_seconds) / baseline_seconds * 100
-    return f", {change:+.1f}% vs baseline"
+    note = ", within run-to-run variation" if _ranges_overlap(baseline, result) else ""
+    return f", {change:+.1f}% vs baseline{note}"
+
+
+def _ranges_overlap(baseline, result):
+    """Say whether two runs' repeat runtimes overlap, when at least one of them was repeated."""
+    baseline_runtimes, result_runtimes = baseline.get("repeat_runtimes") or [], result.get("repeat_runtimes") or []
+    if not baseline_runtimes or not result_runtimes or max(len(baseline_runtimes), len(result_runtimes)) < 2:
+        return False
+    return min(result_runtimes) <= max(baseline_runtimes) and min(baseline_runtimes) <= max(result_runtimes)
+
+
+def _format_repeats(result):
+    """Describe a repeated run's spread for its summary line, e.g. ' median of 3, range 455-471s', or ''."""
+    runtimes = result.get("repeat_runtimes") or []
+    if result["status"] != "success" or len(runtimes) < 2:
+        return ""
+    return f" median of {len(runtimes)}, range {round(min(runtimes))}-{round(max(runtimes))}s"
+
+
+def _format_repeat_outputs(group_results):
+    """Report, for each repeated live run of a group, whether every repeat's output matched its first run's."""
+    checked = [result for result in group_results if "repeat_output_differences" in result]
+    if not checked:
+        return []
+    lines = ["Repeat outputs (each repeat against its own first run):"]
+    for result in checked:
+        differences = result["repeat_output_differences"]
+        if differences:
+            lines.append(f"- {run_name(result)}: {', '.join(differences)} differed from repeat 1")
+        else:
+            lines.append(f"- {run_name(result)}: all {len(result['repeat_runtimes'])} repeats matched")
+    return lines
 
 
 def _precise_runtime(result):
@@ -156,7 +193,7 @@ def build_report_text(results, comparison_groups, colour=False):
         fastest = fastest_result(group_results)
         baseline = _baseline(group_results)
         for result in _ordered(group_results):
-            runtime = f"{format_runtime(result['runtime_seconds'])}{_runtime_change(result, baseline)}"
+            runtime = f"{format_runtime(result['runtime_seconds'])}{_format_repeats(result)}{_runtime_change(result, baseline)}"
             line = f"- {run_name(result)}: {result['status']} ({runtime})"
             lines.append(green(line) if colour and result is fastest else line)
     lines.append("")
@@ -187,10 +224,13 @@ def build_report_text(results, comparison_groups, colour=False):
             baseline = None
         if fastest is not None and len(successful) > 1:
             ordered_successful = [result for result in _ordered(group_results) if result["status"] == "success"]
+            repeated = " Times are medians of each run's repeats." if any(
+                len(result.get("repeat_runtimes") or []) > 1 for result in ordered_successful
+            ) else ""
             if baseline is not None:
-                section.append("Step timings (change against the baseline, negative is faster):")
+                section.append(f"Step timings (change against the baseline, negative is faster):{repeated}")
             else:
-                section.append("Step timings (quickest run first, left to right):")
+                section.append(f"Step timings (quickest run first, left to right):{repeated}")
             rows = build_timing_table([(run_name(result), result["step_timings"]) for result in ordered_successful])
             names = [run_name(result) for result in ordered_successful]
             reference_index = 0 if baseline is not None else None
@@ -203,6 +243,11 @@ def build_report_text(results, comparison_groups, colour=False):
         else:
             skip_reason = comparison["skip_reason"] if comparison is not None else "no comparison data for this group"
             section.append(f"Output comparison skipped: {skip_reason}.")
+
+        repeat_outputs = _format_repeat_outputs(group_results)
+        if repeat_outputs:
+            section.append("")
+            section.extend(repeat_outputs)
 
         if comparison is not None and comparison.get("manifest_notes"):
             section.append("")

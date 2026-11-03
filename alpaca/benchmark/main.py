@@ -1,5 +1,5 @@
 from alpaca.benchmark.utils import (
-    REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_tests_config, validate_tests_per_instance,
+    REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK, validate_repeats, validate_tests_config, validate_tests_per_instance,
     validate_version_pair_config
 )
 from alpaca.benchmark.scripts import (
@@ -15,7 +15,7 @@ from alpaca.benchmark.s3_baseline import (
     download_baseline, resolve_baseline_snapshots, resolve_stored_versions, upload_baseline, validate_baseline_as_of,
     validate_s3_baseline_config
 )
-from alpaca.benchmark.timing import fastest_result, resolve_model_runtime, sort_results_by_speed
+from alpaca.benchmark.timing import fastest_result, repeat_directories, resolve_repeat_timings, sort_results_by_speed
 from alpaca.config import load_config
 from alpaca.exceptions import OasisAlpacaError
 from pathlib import Path
@@ -65,16 +65,18 @@ def main(config_file):
     validate_tests_config(config)
     validate_version_pair_config(config)
     tests_per_instance = validate_tests_per_instance(config)
+    repeats = validate_repeats(config)
 
     snapshots = resolve_baseline_snapshots(config)
     targets = build_benchmark_targets(config, resolve_stored_versions(config) | set(snapshots))
     for target in targets:
         target["snapshot"] = snapshots.get((target["model"], target["test"], target["run_config"].get("OASISLMF_VERSION")))
-    plan = build_benchmark_plan(config, targets, tests_per_instance)
+    plan = build_benchmark_plan(config, targets, tests_per_instance, repeats)
     print(format_benchmark_plan(plan))
 
-    results = _resolve_targets(config, targets, plan["execution_mode"], tests_per_instance)
+    results = _resolve_targets(config, targets, plan["execution_mode"], tests_per_instance, repeats)
     _mark_results(config, targets, results)
+    _check_repeat_outputs(targets, results, relative_tolerance)
     comparison_groups = _compare_targets(targets, results, relative_tolerance)
 
     print(build_report_text(results, comparison_groups, colour=True))
@@ -90,7 +92,7 @@ def main(config_file):
     return {"results": results, "comparison": comparison_groups, "report_path": report_path}
 
 
-def _resolve_targets(config, targets, execution_mode, tests_per_instance="separate"):
+def _resolve_targets(config, targets, execution_mode, tests_per_instance="separate", repeats=1):
     """Produce a result for every target, running the live ones and downloading the stored ones.
 
     Args:
@@ -98,13 +100,14 @@ def _resolve_targets(config, targets, execution_mode, tests_per_instance="separa
         targets: List of targets as returned by build_benchmark_targets.
         execution_mode: 'parallel' or 'sequential', see run_benchmark_targets.
         tests_per_instance: 'separate' or 'shared', see run_benchmark_targets.
+        repeats: How many times each live target runs, see run_benchmark_targets.
 
     Returns:
         list[dict]: One result per target, in targets order, so a caller can pair the two up
             by position.
     """
     live_targets = [target for target in targets if target["source"] == LIVE_SOURCE]
-    live_results = run_benchmark_targets(live_targets, execution_mode, tests_per_instance) if live_targets else []
+    live_results = run_benchmark_targets(live_targets, execution_mode, tests_per_instance, repeats) if live_targets else []
 
     results = dict(zip((target["label"] for target in live_targets), live_results))
     for target in targets:
@@ -123,7 +126,8 @@ def _download_stored_target(config, target):
     Returns:
         dict: A result in run_benchmark_targets' shape, with the version marked as an S3
             baseline and the runtime read from the stored performance metrics (None when the
-            baseline was published without any). A target with a BASELINE_AS_OF 'snapshot' has
+            baseline was published without any), the median of its repeats when it was
+            published with REPEATS (see resolve_repeat_timings). A target with a BASELINE_AS_OF 'snapshot' has
             that copy downloaded, and the result records when it was published as
             'baseline_published_at'. A failed download is reported as a failed
             target rather than raised, so the targets that did run are still reported on.
@@ -138,6 +142,7 @@ def _download_stored_target(config, target):
         "runtime_seconds": None,
         "total_runtime_seconds": None,
         "step_timings": {},
+        "repeat_runtimes": [],
     }
     snapshot = target.get("snapshot")
     stamp = {}
@@ -157,7 +162,7 @@ def _download_stored_target(config, target):
             "details": None,
         }}
 
-    runtime_seconds, step_timings = resolve_model_runtime(result_directory, None)
+    runtime_seconds, step_timings, repeat_runtimes = resolve_repeat_timings(result_directory, None)
     if runtime_seconds is not None:
         runtime_seconds = round(runtime_seconds)
     return {
@@ -165,7 +170,41 @@ def _download_stored_target(config, target):
         "runtime_seconds": runtime_seconds,
         "total_runtime_seconds": runtime_seconds,
         "step_timings": step_timings,
+        "repeat_runtimes": repeat_runtimes,
     }
+
+
+def _check_repeat_outputs(targets, results, relative_tolerance):
+    """Check each repeated live run's repeats all produced the same output as its first run.
+
+    Repeats are the same model, inputs and OasisLMF install on the same instance, so their
+    outputs should match exactly (or within COMPARISON_TOLERANCE). One that doesn't means the
+    model's results vary from run to run, which is worth knowing whatever the timings say.
+    Stored baselines are left out, as only a baseline's first run's output is stored.
+
+    Args:
+        targets: List of targets as returned by build_benchmark_targets.
+        results: The matching results, in the same order (see _resolve_targets). A repeated,
+            successful live run gains 'repeat_output_differences': the repeats (e.g.
+            'repeat 2') whose output didn't match its first run's, or that couldn't be
+            compared, empty when they all matched.
+    """
+    for target, result in zip(targets, results):
+        directories = repeat_directories(target["run_config"]["RESULT_DIRECTORY"])
+        if target["source"] != LIVE_SOURCE or result["status"] != "success" or len(directories) < 2:
+            continue
+        repeats = [(f"repeat {number}", directory) for number, directory in enumerate(directories[1:], start=2)]
+        try:
+            report = build_comparison_reports(("repeat 1", directories[0]), repeats, relative_tolerance)
+        except OasisAlpacaError as error:
+            logger.warning(f"Could not compare the repeats of {run_name(result)}: {error}")
+            result["repeat_output_differences"] = [name for name, _ in repeats]
+            continue
+        result["repeat_output_differences"] = [
+            comparison["target"] for comparison in report["comparisons"] if comparison["status"] != "pass"
+        ]
+        if result["repeat_output_differences"]:
+            logger.warning(f"{run_name(result)}: {', '.join(result['repeat_output_differences'])} output differed from repeat 1")
 
 
 def _mark_results(config, targets, results):
@@ -342,10 +381,13 @@ def benchmark_failed(output):
         output: dict as returned by main.
 
     Returns:
-        bool: True when any run failed or any group's output comparison failed, so a scheduled
-            or CI run doesn't look green when it isn't. A run that isn't like for like with its
-            reference is only reported, as its outputs and timings may still be fine.
+        bool: True when any run failed, any group's output comparison failed, or any repeated
+            run's repeats didn't all produce the same output, so a scheduled or CI run doesn't
+            look green when it isn't. A run that isn't like for like with its reference is only
+            reported, as its outputs and timings may still be fine, and so is a slowdown.
     """
     if any(result["status"] != "success" for result in output["results"]):
+        return True
+    if any(result.get("repeat_output_differences") for result in output["results"]):
         return True
     return any(group["report"] is not None and group["report"]["status"] != "pass" for group in output["comparison"])

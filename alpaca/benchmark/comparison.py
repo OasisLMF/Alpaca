@@ -1,3 +1,4 @@
+from alpaca.benchmark.timing import outside_repeats
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from pathlib import Path
 
@@ -18,7 +19,8 @@ def find_output_dir(run_directory):
     directory to find it rather than assuming a fixed depth. RESULT_DIRECTORY isn't cleared
     between benchmark runs, so older 'losses-*' folders from previous attempts may still be
     present; the most recently modified 'output' directory is used, since that's the one the
-    run that just finished downloaded into.
+    run that just finished downloaded into. With REPEATS, it's the first run's output, never a
+    later repeat's (see alpaca.benchmark.timing.outside_repeats).
 
     Args:
         run_directory: Local directory a benchmark target's results were downloaded to.
@@ -29,7 +31,9 @@ def find_output_dir(run_directory):
     Raises:
         OasisAlpacaError: If no 'output' directory is found under run_directory.
     """
-    output_dirs = [path for path in Path(run_directory).rglob("output") if path.is_dir()]
+    output_dirs = [
+        path for path in Path(run_directory).rglob("output") if path.is_dir() and outside_repeats(path, run_directory)
+    ]
     if not output_dirs:
         raise OasisAlpacaError(f"No 'output' directory found under {run_directory}")
     return max(output_dirs, key=lambda path: path.stat().st_mtime)
