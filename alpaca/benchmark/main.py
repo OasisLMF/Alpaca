@@ -84,6 +84,8 @@ def main(config_file):
     logger.info(f"Benchmark report written to {report_path}")
     if config.get("PUBLISH_BASELINE", False):
         _publish_baselines(config, targets, results, report_path)
+    elif config.get("PUBLISH_TEST_VERSION", False):
+        _publish_baselines(config, targets, results, report_path, only_version=config["OASISLMF_TEST_VERSION"])
 
     return {"results": results, "comparison": comparison_groups, "report_path": report_path}
 
@@ -304,22 +306,28 @@ def _compare_group(pairs, relative_tolerance):
     return {"report": report, "skip_reason": "", "manifest_notes": manifest_notes, "reference": run_name(reference[1])}
 
 
-def _publish_baselines(config, targets, results, report_path=None):
+def _publish_baselines(config, targets, results, report_path=None, only_version=None):
     """Publish each successful version target's results as that version's stored baseline.
 
     Branch targets are skipped: a baseline is stored under an OasisLMF version, and a branch
     has none to store it under. A baseline already stored for a version is moved into its
     history rather than overwritten (see alpaca.benchmark.s3_baseline.upload_baseline).
+    PUBLISH_TEST_VERSION publishes only the test version's runs (see only_version). It
+    publishes them whether or not their output matched the baseline's, since they're what
+    that release produces, and the report published beside them records any difference.
 
     Args:
         config: Validated benchmark configuration dictionary.
         targets: List of targets as returned by build_benchmark_targets.
         results: The matching results, in the same order (see _resolve_targets).
         report_path: The benchmark's saved report, published alongside each baseline.
+        only_version: Publish only this version's targets, or None for every version's.
     """
     for target, result in zip(targets, results):
         version = target["run_config"].get("OASISLMF_VERSION")
         if not version or result["status"] != "success" or target["source"] == STORED_SOURCE:
+            continue
+        if only_version is not None and version != only_version:
             continue
         upload_baseline(
             config["BENCHMARK_BUCKET"], target["model"], target["test"], version,

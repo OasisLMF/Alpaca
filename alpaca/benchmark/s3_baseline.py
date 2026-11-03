@@ -78,7 +78,7 @@ def _s3_client(config):
 
 
 def validate_s3_baseline_config(config):
-    """Validate BENCHMARK_BUCKET/PUBLISH_BASELINE combinations before any EC2 spend.
+    """Validate BENCHMARK_BUCKET/PUBLISH_BASELINE/PUBLISH_TEST_VERSION combinations before any EC2 spend.
 
     Args:
         config: Validated benchmark configuration dictionary.
@@ -88,7 +88,18 @@ def validate_s3_baseline_config(config):
             without any version to publish under (see
             alpaca.benchmark.scripts.benchmark_versions), since a baseline is stored under a
             version and a branch target hasn't got one.
+        OasisAlpacaConfigError: If PUBLISH_TEST_VERSION is set without BENCHMARK_BUCKET or
+            OASISLMF_TEST_VERSION, or alongside PUBLISH_BASELINE, which already publishes every
+            version (the test version included) but runs the baseline live to do it.
     """
+    if config.get("PUBLISH_TEST_VERSION", False):
+        if not config.get("BENCHMARK_BUCKET"):
+            raise OasisAlpacaConfigError("PUBLISH_TEST_VERSION requires BENCHMARK_BUCKET to be set")
+        if not config.get("OASISLMF_TEST_VERSION"):
+            raise OasisAlpacaConfigError("PUBLISH_TEST_VERSION requires OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION to be set")
+        if config.get("PUBLISH_BASELINE", False):
+            raise OasisAlpacaConfigError("Set either PUBLISH_BASELINE or PUBLISH_TEST_VERSION, not both")
+
     if not config.get("PUBLISH_BASELINE", False):
         return
 

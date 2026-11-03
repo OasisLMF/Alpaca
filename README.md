@@ -165,6 +165,7 @@ loads the config:
 | `COMPARISON_TOLERANCE` | `0.005` | benchmark | Relative tolerance for numeric cells when diffing outputs (0.005 = 0.5%) |
 | `BENCHMARK_BUCKET` | *(none)* | benchmark | `s3://bucket` holding versioned baseline outputs and metrics |
 | `PUBLISH_BASELINE` | `False` | benchmark | `True` runs every version live and stores each successful run in `BENCHMARK_BUCKET`, moving what's there into its history — see [Stored S3 baselines](#stored-s3-baselines) |
+| `PUBLISH_TEST_VERSION` | `False` | benchmark | `True` stores the `OASISLMF_TEST_VERSION` run in `BENCHMARK_BUCKET` after comparing it, while the baseline is still reused — see [Publishing the test version](#publishing-the-test-version) |
 
 If neither `OASISLMF_VERSION` nor `OASISLMF_BRANCH` is set, the latest OasisLMF release on
 PyPI is installed. `MAX_LIFETIME_HOURS` only records an end time on the instance tag; Alpaca
@@ -420,6 +421,29 @@ that's still the current result or has since moved into `history/`.
 The plan and the report show which result was used, e.g.
 `PiWind 2.5.7 (baseline, from S3, 2026-10-06)`. The instance-type check still applies, so an
 older result that ran on a different instance type is flagged as not like for like.
+
+### Publishing the test version
+
+`PUBLISH_BASELINE` runs every version live. With a baseline/test pair,
+`"PUBLISH_TEST_VERSION": true` stores only the test version's run instead, once it's been
+compared, so the next release can be compared against it without running it again:
+
+```json
+"OASISLMF_BASELINE_VERSION": "previous",
+"OASISLMF_TEST_VERSION": "latest",
+"BENCHMARK_BUCKET": "s3://my-benchmark-bucket",
+"PUBLISH_TEST_VERSION": true
+```
+
+* The baseline is reused from `BENCHMARK_BUCKET` as normal (or run live when it isn't stored)
+  and is never republished.
+* Each model and test's test-version run is stored when it succeeds, whether or not its
+  output matched the baseline's: it's what that release produces, and the report stored
+  beside it records any difference. A failed run is never stored, and nor is a branch.
+* Anything already stored for that version is moved into its history first, as with
+  `PUBLISH_BASELINE`.
+* It needs `BENCHMARK_BUCKET` and the baseline/test pair, and can't be combined with
+  `PUBLISH_BASELINE`.
 
 ### Reading the report
 

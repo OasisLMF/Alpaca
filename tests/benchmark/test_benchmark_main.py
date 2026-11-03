@@ -1115,3 +1115,81 @@ def test_main_compares_the_latest_release_with_the_previous_one(mock_model_main,
 
     assert [call.args[0]["OASISLMF_VERSION"] for call in mock_model_main.call_args_list] == ["2.5.8", "2.5.9"]
     assert [run_name(r) for r in output["results"]] == ["PiWind 2.5.8 (baseline)", "PiWind 2.5.9"]
+
+
+@mock_aws
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_publishes_only_the_test_version_and_reuses_the_stored_baseline(mock_model_main, tmp_path):
+    """The monthly run: the stored 2.5.7 baseline is reused, 2.5.8 runs live, and only 2.5.8 is
+    published, so next month's release can be compared against it without running it again.
+    """
+    boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="alpaca-benchmark")
+    published = tmp_path / "published"
+    _write_output_files(published, {"summary.csv": "a,b\n1,2\n"})
+    upload_baseline("s3://alpaca-benchmark", "PiWind", None, "2.5.7", published, {"AWS_REGION": "us-east-1"})
+    results_dir = tmp_path / "results"
+    _write_output_files(results_dir / "PiWind-2.5.8", {"summary.csv": "a,b\n1,3\n"})
+    config_path = _write_config(tmp_path, {
+        "AWS_REGION": "us-east-1", "BENCHMARK_BUCKET": "s3://alpaca-benchmark", "RESULT_DIRECTORY": str(results_dir),
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+        "PUBLISH_TEST_VERSION": True,
+    })
+
+    output = main(config_path)
+
+    client = boto3.client("s3", region_name="us-east-1")
+    keys = sorted(obj["Key"] for obj in client.list_objects_v2(Bucket="alpaca-benchmark")["Contents"])
+    assert [call.args[0]["OASISLMF_VERSION"] for call in mock_model_main.call_args_list] == ["2.5.8"]
+    assert _group_for(output, "PiWind")["report"]["status"] != "pass"
+    assert client.get_object(Bucket="alpaca-benchmark", Key="PiWind/2.5.8/output/summary.csv")["Body"].read() == b"a,b\n1,3\n"
+    assert "PiWind/2.5.8/benchmark_report.txt" in keys
+    assert not any(key.startswith("PiWind/2.5.7/history/") for key in keys)
+
+
+@mock.patch("alpaca.benchmark.main.upload_baseline")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_publishes_the_test_version_of_every_test_but_never_a_branch(mock_model_main, mock_upload_baseline, tmp_path):
+    config_path = _write_tests_config(tmp_path, {
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+        "OASISLMF_BRANCHES": ["release-candidate"], "BENCHMARK_BUCKET": "s3://alpaca-benchmark", "PUBLISH_TEST_VERSION": True,
+    })
+
+    with mock.patch("alpaca.benchmark.main.resolve_stored_versions", return_value=set()):
+        main(config_path)
+
+    assert [call.args[1:4] for call in mock_upload_baseline.call_args_list] == [
+        ("PiWind", "test_1", "2.5.8"), ("PiWind", "test_2", "2.5.8"),
+    ]
+
+
+@mock.patch("alpaca.benchmark.main.upload_baseline")
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_does_not_publish_a_failed_test_version_run(mock_model_main, mock_upload_baseline, tmp_path):
+    mock_model_main.side_effect = [None, RuntimeError("boom")]
+    config_path = _write_config(tmp_path, {
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+        "BENCHMARK_BUCKET": "s3://alpaca-benchmark", "PUBLISH_TEST_VERSION": True,
+    })
+
+    with mock.patch("alpaca.benchmark.main.resolve_stored_versions", return_value=set()):
+        main(config_path)
+
+    mock_upload_baseline.assert_not_called()
+
+
+@pytest.mark.parametrize("overrides, message", [
+    ({"BENCHMARK_BUCKET": ""}, "PUBLISH_TEST_VERSION requires BENCHMARK_BUCKET"),
+    ({"OASISLMF_BASELINE_VERSION": "", "OASISLMF_TEST_VERSION": "", "OASISLMF_VERSIONS": ["2.5.7"]},
+     "PUBLISH_TEST_VERSION requires OASISLMF_BASELINE_VERSION and OASISLMF_TEST_VERSION"),
+    ({"PUBLISH_BASELINE": True}, "Set either PUBLISH_BASELINE or PUBLISH_TEST_VERSION, not both"),
+])
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_rejects_publish_test_version_it_cannot_honour_before_running_anything(mock_model_main, tmp_path, overrides, message):
+    config_path = _write_config(tmp_path, {
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+        "BENCHMARK_BUCKET": "s3://alpaca-benchmark", "PUBLISH_TEST_VERSION": True, **overrides,
+    })
+
+    with pytest.raises(OasisAlpacaConfigError, match=message):
+        main(config_path)
+    mock_model_main.assert_not_called()

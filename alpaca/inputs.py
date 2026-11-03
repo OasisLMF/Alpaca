@@ -75,6 +75,13 @@ PUBLISH_BASELINE = (
     "stored one (branch targets are skipped, having no version to publish under)",
     False
 )
+PUBLISH_TEST_VERSION = (
+    "PUBLISH_TEST_VERSION",
+    "When 'True' and BENCHMARK_BUCKET is set, publish the OASISLMF_TEST_VERSION run as that version's new stored "
+    "baseline once the benchmark has compared it, while the baseline version is still reused from BENCHMARK_BUCKET "
+    "as normal, so the next release can be compared against it without running this one again",
+    False
+)
 PYTEST_ARGS = ("PYTEST_ARGS", "Arguments to pass to PyTest (already uses -vv flag)", "")
 REPO_LOCATION = ("REPO_LOCATION", "S3 location (s3://bucket) or link to GitHub repo (https://github.com/name/repo) with data",
                  "https://github.com/OasisLMF/OasisPiWind")
