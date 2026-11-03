@@ -1087,3 +1087,31 @@ def test_main_raises_on_baseline_as_of_without_a_version_pair_before_running_any
     with pytest.raises(OasisAlpacaConfigError, match="requires OASISLMF_BASELINE_VERSION"):
         main(config_path)
     mock_model_main.assert_not_called()
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_runs_the_latest_release_as_the_test_version(mock_model_main, tmp_path, capsys):
+    config_path = _write_config(tmp_path, {
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "2.5.8", "OASISLMF_TEST_VERSION": "latest",
+    })
+
+    with mock.patch("alpaca.benchmark.releases._pypi_project", return_value={"info": {"version": "2.5.9"}}):
+        output = main(config_path)
+
+    assert [call.args[0]["OASISLMF_VERSION"] for call in mock_model_main.call_args_list] == ["2.5.8", "2.5.9"]
+    assert [r["version"] for r in output["results"]] == ["2.5.8", "2.5.9"]
+    assert "- PiWind: OasisLMF 2.5.9" in capsys.readouterr().out
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_compares_the_latest_release_with_the_previous_one(mock_model_main, tmp_path):
+    config_path = _write_config(tmp_path, {
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "previous", "OASISLMF_TEST_VERSION": "latest",
+    })
+    project = {"info": {"version": "2.5.9"}, "releases": {"2.5.8": [{"yanked": False}], "2.5.9": [{"yanked": False}]}}
+
+    with mock.patch("alpaca.benchmark.releases._pypi_project", return_value=project):
+        output = main(config_path)
+
+    assert [call.args[0]["OASISLMF_VERSION"] for call in mock_model_main.call_args_list] == ["2.5.8", "2.5.9"]
+    assert [run_name(r) for r in output["results"]] == ["PiWind 2.5.8 (baseline)", "PiWind 2.5.9"]

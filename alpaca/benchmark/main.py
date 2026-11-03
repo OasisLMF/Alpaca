@@ -9,6 +9,7 @@ from alpaca.benchmark.executor import run_benchmark_targets
 from alpaca.benchmark.failure import describe_failure
 from alpaca.benchmark.manifest import manifest_differences, read_manifest
 from alpaca.benchmark.comparison import build_comparison_reports, resolve_relative_tolerance
+from alpaca.benchmark.releases import resolve_latest_versions
 from alpaca.benchmark.report import build_report_text, run_name, write_report
 from alpaca.benchmark.s3_baseline import (
     download_baseline, resolve_baseline_snapshots, resolve_stored_versions, upload_baseline, validate_baseline_as_of,
@@ -34,7 +35,9 @@ def main(config_file):
     have a stored baseline in BENCHMARK_BUCKET, in which case that is downloaded instead of
     paying for the run again. With BASELINE_AS_OF set, the OASISLMF_BASELINE_VERSION baseline
     downloaded is the one that was current at that date, from the baseline's history when it's
-    since been replaced (see alpaca.benchmark.s3_baseline.resolve_baseline_snapshots).
+    since been replaced (see alpaca.benchmark.s3_baseline.resolve_baseline_snapshots). A
+    version given as 'latest' is the newest OasisLMF release on PyPI (see
+    alpaca.benchmark.releases.resolve_latest_versions).
 
     Comparison (both timing and output) is scoped per group, i.e. per model and test (see
     alpaca.benchmark.scripts.group_name): within a group's own targets, the fastest becomes
@@ -55,6 +58,7 @@ def main(config_file):
             _compare_targets) and 'report_path' (where the combined report was written).
     """
     config = load_config(config_file, REQUIRED_CONFIG_BENCHMARK, OPTIONAL_CONFIG_BENCHMARK)
+    resolve_latest_versions(config)
     relative_tolerance = resolve_relative_tolerance(config)
     validate_s3_baseline_config(config)
     validate_baseline_as_of(config)

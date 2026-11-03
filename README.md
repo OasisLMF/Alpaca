@@ -290,6 +290,32 @@ There are two ways to say which OasisLMF versions to run:
 Set both pair keys or neither, don't combine them with `OASISLMF_VERSIONS`, and don't set
 them to the same version. `OASISLMF_BRANCHES` and `TESTS` work with either style.
 
+### Testing the latest release
+
+Set `OASISLMF_TEST_VERSION` to `"latest"` to test whichever OasisLMF release is newest on
+PyPI, and `OASISLMF_BASELINE_VERSION` to `"previous"` to compare it with the release before
+it. A scheduled benchmark then doesn't need its config edited after each release:
+
+```json
+"OASISLMF_BASELINE_VERSION": "previous",
+"OASISLMF_TEST_VERSION": "latest",
+"BENCHMARK_BUCKET": "s3://my-benchmark-bucket"
+```
+
+With 2.5.9 the newest release, that compares 2.5.9 against 2.5.8, using the stored 2.5.8
+baseline when there is one, or running it live alongside 2.5.9 when there isn't.
+
+* "Latest" means what `pip install oasislmf` would install: pre-releases and yanked releases
+  are left out. The version it picked is logged and shown in the plan and report.
+* An `OASISLMF_VERSIONS` entry can be `"latest"` too.
+* "Previous" goes by version number, not release date: the highest release below the test
+  version, so a 2.4.x maintenance release published after 2.5.9 is never picked. It works
+  with a pinned test version too (`"previous"` with `"2.5.8"` compares against 2.5.7).
+* Only `OASISLMF_BASELINE_VERSION` can be `"previous"`, and it can't be `"latest"`.
+* If the latest release is the baseline version, there's nothing new to test, so the
+  benchmark stops before launching anything and says so. It also stops if PyPI can't be
+  reached.
+
 ### Tests
 
 `TESTS` runs several tests of one model, typically the same model data with a different
