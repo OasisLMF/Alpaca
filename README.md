@@ -186,6 +186,13 @@ up in S3 depending on your configuration. The run's own output, including the
 `COMPLETED: <step> in <seconds>s` lines OasisLMF reports per stage, is teed into
 `runs/result.txt` so it comes back with the results.
 
+While the model runs, the instance's memory use is sampled once a second into
+`runs/memory.csv` (`timestamp`, `total_kib`, `used_kib`, `swap_used_kib`, `oom_kills`).
+`used_kib` is memory the instance couldn't free without swapping, so the file cache isn't
+counted, and `oom_kills` is the kernel's running count of processes it killed for running out
+of memory. It covers every process OasisLMF starts, not just the first, and never affects the
+run itself.
+
 A run that exits non-zero fails the command rather than reporting success. Results are
 downloaded either way, so a failed run's partial output and logs are still there to look at.
 
@@ -364,6 +371,7 @@ when `TESTS` is used:
 PiWind/2.5.6/output/...                    # from PATH_TO_OASISLMF_JSON
 PiWind/2.5.6/performance/result.txt
 PiWind/2.5.6/performance/manifest.json
+PiWind/2.5.6/performance/memory.csv
 PiWind/2.5.6/benchmark_report.txt          # the report of the benchmark that published it
 PiWind/2.5.6/published.json                # when it was published, and for which model, test and version
 PiWind/test_1/2.5.6/output/...             # from TESTS
@@ -461,6 +469,15 @@ any failed runs, then one section per model (and test) containing:
   0.5%), since sampling means two runs rarely give byte-identical losses. Any other
   difference, or a file only one run has, is reported.
 * **Like-for-like check**: see below.
+
+Peak memory is the most the whole instance had in use while the model ran (see
+[Running a model](#running-a-model)), shown against the instance's total, e.g.
+`peak memory 9.8 GiB of 15.3 GiB`. With a baseline/test pair it also shows the change from
+the baseline, like the runtime. It includes the operating system's own share, which is the
+same for runs on the same instance type and AMI, so compare runs the like-for-like check
+passes. A result stored before memory was sampled shows `memory not recorded`. A run that
+used swap, or had a process killed for running out of memory, is listed under
+`Memory warnings:`, as either would explain a slow or failed run.
 
 A group's comparison is skipped, with the reason given, when its baseline failed or fewer
 than two of its runs succeeded. That never holds back another group.

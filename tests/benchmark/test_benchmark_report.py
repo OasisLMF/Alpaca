@@ -314,3 +314,64 @@ def test_build_report_text_says_when_runs_are_like_for_like():
     text = build_report_text(_baseline_results(), [group])
 
     assert "- PiWind 2.5.8: same instance type, AMI and inputs" in text
+
+
+def _memory(peak_gib, total_gib=16.0, swap_kib=0, oom_kills=0):
+    return {
+        "peak_used_kib": int(peak_gib * 1024 ** 2), "total_kib": int(total_gib * 1024 ** 2),
+        "peak_swap_used_kib": swap_kib, "oom_kills": oom_kills, "samples": 10,
+    }
+
+
+def test_build_report_text_shows_each_runs_peak_memory():
+    results = [
+        {**_result("PiWind", "2.4.9", "success", 166), "memory": _memory(9.8)},
+        {**_result("PiWind", "2.3.3", "success", 210), "memory": _memory(10.25)},
+    ]
+    run_lines = [line for line in build_report_text(results, PASSING_GROUPS).splitlines() if line.startswith("- ")]
+
+    assert run_lines == [
+        "- PiWind 2.4.9: success (166s; peak memory 9.8 GiB of 16.0 GiB)",
+        "- PiWind 2.3.3: success (210s; peak memory 10.2 GiB of 16.0 GiB)",
+    ]
+
+
+def test_build_report_text_shows_the_peak_memory_change_against_the_baseline():
+    baseline = {**_result("PiWind", "2.5.7", "success", 200), "is_baseline": True, "memory": _memory(10.0)}
+    test = {**_result("PiWind", "2.5.8", "success", 150), "is_baseline": False, "memory": _memory(10.5)}
+
+    report_text = build_report_text([baseline, test], PASSING_GROUPS)
+
+    assert "- PiWind 2.5.8: success (150s, -25.0% vs baseline; peak memory 10.5 GiB of 16.0 GiB, +5.0% vs baseline)" in report_text
+
+
+def test_build_report_text_calls_out_a_run_without_memory_only_when_another_has_it():
+    """A baseline stored before memory was sampled says so, rather than silently showing nothing."""
+    baseline = {**_result("PiWind", "2.5.7", "success", 200), "is_baseline": True, "source": "stored"}
+    test = {**_result("PiWind", "2.5.8", "success", 150), "is_baseline": False, "memory": _memory(10.5)}
+
+    report_text = build_report_text([baseline, test], PASSING_GROUPS)
+
+    assert "- PiWind 2.5.7 (baseline, from S3): success (200s; memory not recorded)" in report_text
+    assert "- PiWind 2.5.8: success (150s, -25.0% vs baseline; peak memory 10.5 GiB of 16.0 GiB)" in report_text
+
+
+def test_build_report_text_says_nothing_about_memory_when_no_run_recorded_it():
+    report_text = build_report_text([_result("PiWind", "2.5.7", "success", 200)], PASSING_GROUPS)
+
+    assert "- PiWind 2.5.7: success (200s)" in report_text
+    assert "memory" not in report_text
+
+
+def test_build_report_text_warns_about_swapping_and_out_of_memory_kills():
+    results = [
+        {**_result("PiWind", "2.5.7", "success", 200), "memory": _memory(15.5, swap_kib=1024 ** 2 * 2)},
+        {**_result("PiWind", "2.5.8", "failed", 90), "memory": _memory(15.9, oom_kills=1)},
+    ]
+
+    report_text = build_report_text(results, PASSING_GROUPS)
+
+    assert "Memory warnings:\n" in report_text
+    assert "- PiWind 2.5.7: used 2.0 GiB of swap" in report_text
+    assert "- PiWind 2.5.8: the kernel killed 1 process for running out of memory" in report_text
+    assert "- PiWind 2.5.8: failed (90s; peak memory 15.9 GiB of 16.0 GiB)" in report_text

@@ -1,5 +1,6 @@
 from alpaca.benchmark.comparison import find_output_dir
 from alpaca.benchmark.manifest import MANIFEST_FILENAME
+from alpaca.benchmark.memory import MEMORY_FILENAME, find_memory_file
 from alpaca.benchmark.report import REPORT_FILENAME
 from alpaca.benchmark.scripts import (
     benchmark_locations, benchmark_tests, benchmark_versions, group_name, model_name_from_location
@@ -401,8 +402,9 @@ def upload_baseline(bucket_uri, model, test, version, result_directory, config, 
     first (see _archive_baseline), so it's kept rather than overwritten. The performance data is
     the run's result.txt and, when there is one, its manifest.json (see
     alpaca.benchmark.manifest), so a later benchmark reusing the baseline can check it ran
-    under the same conditions. The benchmark's report goes alongside, so a baseline, current or archived, can be read without
-    re-running anything, and a published.json records when and what was published.
+    under the same conditions, and its memory.csv (see alpaca.benchmark.memory). The benchmark's
+    report goes alongside, so a baseline, current or archived, can be read without re-running
+    anything, and a published.json records when and what was published.
 
     Args:
         bucket_uri: S3 bucket URI (e.g. 's3://alpaca-benchmark') to publish under.
@@ -443,6 +445,11 @@ def upload_baseline(bucket_uri, model, test, version, result_directory, config, 
         client.upload_file(str(manifest_file), bucket, f"{prefix}/performance/{MANIFEST_FILENAME}")
         logger.info(f"Published {name} {version} manifest to s3://{bucket}/{prefix}/performance")
 
+    memory_file = find_memory_file(result_directory)
+    if memory_file is not None:
+        client.upload_file(str(memory_file), bucket, f"{prefix}/performance/{MEMORY_FILENAME}")
+        logger.info(f"Published {name} {version} memory use to s3://{bucket}/{prefix}/performance")
+
     if report_path is not None and Path(report_path).is_file():
         client.upload_file(str(report_path), bucket, f"{prefix}/{REPORT_FILENAME}")
 
@@ -459,9 +466,10 @@ def download_baseline(bucket_uri, model, test, version, local_directory, config,
     """Download a model/test/version's stored baseline output and performance data locally.
 
     Downloads into a shape identical to a normal run's downloaded result directory
-    (local_directory/output/*, local_directory/result.txt and, when one was published,
-    local_directory/manifest.json), so find_output_dir, find_result_file,
-    resolve_model_runtime and read_manifest all work on it unmodified. The current baseline is
+    (local_directory/output/*, local_directory/result.txt and, when they were published,
+    local_directory/manifest.json and local_directory/memory.csv), so find_output_dir,
+    find_result_file, resolve_model_runtime, read_manifest and summarise_memory all work on it
+    unmodified. The current baseline is
     downloaded unless stamp picks one of its history's copies instead (see
     resolve_baseline_snapshots).
 
@@ -515,5 +523,10 @@ def download_baseline(bucket_uri, model, test, version, local_directory, config,
         client.download_file(bucket, f"{prefix}/performance/{MANIFEST_FILENAME}", str(local_directory / MANIFEST_FILENAME))
     except ClientError:
         logger.info(f"No stored manifest found at s3://{bucket}/{prefix}/performance/ (published before manifests existed)")
+
+    try:
+        client.download_file(bucket, f"{prefix}/performance/{MEMORY_FILENAME}", str(local_directory / MEMORY_FILENAME))
+    except ClientError:
+        logger.info(f"No stored memory use found at s3://{bucket}/{prefix}/performance/ (published before memory was sampled)")
 
     return local_directory

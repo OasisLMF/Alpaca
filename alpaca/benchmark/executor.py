@@ -3,6 +3,7 @@ from alpaca.model.main import log_condition, main as model_main
 from alpaca.model.utils import OPTIONAL_CONFIG_MODEL, REQUIRED_CONFIG_MODEL
 from alpaca.benchmark.failure import describe_failure, missing_inputs, write_failure
 from alpaca.benchmark.manifest import write_manifest
+from alpaca.benchmark.memory import summarise_memory
 from alpaca.benchmark.scripts import group_name
 from alpaca.benchmark.timing import resolve_model_runtime
 from alpaca.logging_context import log_target
@@ -57,6 +58,7 @@ def _finish_target(run_config_entry, error, total_runtime_seconds, tests_per_ins
         "runtime_seconds": runtime_seconds,
         "total_runtime_seconds": total_runtime_seconds,
         "step_timings": step_timings,
+        "memory": _read_memory(run_config_entry),
     }
     if error is not None:
         failure = describe_failure(error)
@@ -70,6 +72,15 @@ def _finish_target(run_config_entry, error, total_runtime_seconds, tests_per_ins
             "stage": failure["stage"], "message": failure["message"], "missing_inputs": missing, "details": details,
         }
     return result
+
+
+def _read_memory(run_config_entry):
+    """Summarise a run's sampled memory use (see summarise_memory), or None if it can't be read."""
+    try:
+        return summarise_memory(run_config_entry["run_config"]["RESULT_DIRECTORY"])
+    except Exception:
+        logger.exception(f"Could not read the memory use of benchmark target '{run_config_entry['label']}'")
+        return None
 
 
 def _run_target(run_config_entry):
@@ -91,14 +102,17 @@ def _run_target(run_config_entry):
 
     Returns:
         dict: {'label', 'model', 'test', 'version', 'status', 'runtime_seconds',
-            'total_runtime_seconds', 'step_timings'}, plus 'failure' for a failed run.
+            'total_runtime_seconds', 'step_timings', 'memory'}, plus 'failure' for a failed run.
             'label' is the target's own label, so a result can be traced back to the target
             that produced it. 'status' is 'success' unless the run raises, in which case it is
             'failed', the exception is logged, and 'failure' holds its 'stage', 'message',
             'missing_inputs' and the path of its failure.txt ('details'), see _finish_target.
             'step_timings' is a dict of every 'COMPLETED: <step> in <seconds>s' OasisLMF
             reported (e.g. 'execution.runner.run', 'computation.generate.files.run'), empty on
-            failure or when result.txt couldn't be found/parsed.
+            failure or when result.txt couldn't be found/parsed. 'memory' is the instance's
+            memory use while the model ran (see alpaca.benchmark.memory.summarise_memory),
+            None when it wasn't sampled; a failed run keeps it too, as running out of memory
+            may be why it failed.
     """
     start = time.monotonic()
     error = None
@@ -219,8 +233,8 @@ def run_benchmark_targets(run_configs, execution_mode="parallel", tests_per_inst
 
     Returns:
         list[dict]: One result per target, in run_configs order, each with 'label', 'model', 'test',
-            'version', 'status', 'runtime_seconds', 'total_runtime_seconds' and
-            'step_timings', plus 'failure' for a failed one (see _run_target).
+            'version', 'status', 'runtime_seconds', 'total_runtime_seconds', 'step_timings'
+            and 'memory', plus 'failure' for a failed one (see _run_target).
     """
     groups = instance_groups(run_configs, tests_per_instance)
     if tests_per_instance == "shared":

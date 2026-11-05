@@ -2,6 +2,7 @@ from alpaca.benchmark.s3_baseline import (
     download_baseline, parse_baseline_as_of, resolve_baseline_snapshots, resolve_stored_versions, upload_baseline,
     validate_baseline_as_of, validate_s3_baseline_config
 )
+from alpaca.benchmark.memory import summarise_memory
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from datetime import datetime, timezone
 from moto import mock_aws
@@ -162,16 +163,18 @@ def test_upload_baseline_keeps_the_previous_baseline_when_archiving_fails(tmp_pa
 
 
 @mock_aws
-def test_upload_baseline_publishes_the_report_and_what_was_published(tmp_path):
+def test_upload_baseline_publishes_the_report_memory_use_and_what_was_published(tmp_path):
     bucket = _make_bucket()
     report_path = tmp_path / "benchmark_report.txt"
     report_path.write_text("Benchmark Report\n")
     run_directory = _write_run_directory(tmp_path / "run", {"summary.csv": "a\n"})
+    (run_directory / "losses-x" / "memory.csv").write_text("timestamp,total_kib,used_kib,swap_used_kib,oom_kills\n")
 
     upload_baseline(f"s3://{bucket}", "PiWind", "test_1", "2.5.4", run_directory, CONFIG, report_path)
 
     client = boto3.client("s3", region_name=REGION)
     assert client.get_object(Bucket=bucket, Key="PiWind/test_1/2.5.4/benchmark_report.txt")["Body"].read() == b"Benchmark Report\n"
+    assert client.get_object(Bucket=bucket, Key="PiWind/test_1/2.5.4/performance/memory.csv")["Body"].read().startswith(b"timestamp")
     published = json.loads(client.get_object(Bucket=bucket, Key="PiWind/test_1/2.5.4/published.json")["Body"].read())
     assert published["model"] == "PiWind"
     assert published["test"] == "test_1"
@@ -192,6 +195,18 @@ def test_stored_baseline_is_still_found_and_downloaded_with_a_history(tmp_path):
     downloaded = sorted(str(path.relative_to(tmp_path / "download")) for path in (tmp_path / "download").rglob("*") if path.is_file())
     assert downloaded == ["output/summary.csv"]
     assert (tmp_path / "download" / "output" / "summary.csv").read_text() == "new\n"
+
+
+@mock_aws
+def test_download_baseline_carries_the_memory_use(tmp_path):
+    bucket = _make_bucket()
+    run_directory = _write_run_directory(tmp_path / "run", {"summary.csv": "a\n"})
+    (run_directory / "memory.csv").write_text("timestamp,total_kib,used_kib,swap_used_kib,oom_kills\n1,100,50,0,0\n")
+    upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", run_directory, CONFIG)
+
+    download_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", tmp_path / "download", CONFIG)
+
+    assert (tmp_path / "download" / "memory.csv").read_text().endswith("1,100,50,0,0\n")
 
 
 @mock_aws
@@ -715,3 +730,26 @@ def test_download_baseline_downloads_a_copy_from_the_history(tmp_path):
     )
 
     assert (local_directory / "output" / "summary.csv").read_text() == "20261001-000000\n"
+
+
+def _memory_csv(used_kib):
+    return f"timestamp,total_kib,used_kib,swap_used_kib,oom_kills\n1.0,16000000,{used_kib},0,0\n"
+
+
+@mock_aws
+def test_a_baseline_from_the_history_comes_back_with_its_own_memory_use(tmp_path):
+    """BASELINE_AS_OF downloads an older copy; its memory figures must be that copy's, not the current one's."""
+    bucket = _make_bucket()
+    for day, used_kib in ((1, 8000000), (2, 9000000)):
+        run_directory = _write_run_directory(tmp_path / f"run{day}", {"summary.csv": "a\n"})
+        (run_directory / "losses-x" / "memory.csv").write_text(_memory_csv(used_kib))
+        with mock.patch("alpaca.benchmark.s3_baseline.datetime") as fake_datetime:
+            fake_datetime.now.return_value = datetime(2026, 10, day, tzinfo=timezone.utc)
+            fake_datetime.fromisoformat = datetime.fromisoformat
+            upload_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", run_directory, CONFIG)
+
+    current = download_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", tmp_path / "current", CONFIG)
+    older = download_baseline(f"s3://{bucket}", "PiWind", None, "2.5.4", tmp_path / "older", CONFIG, stamp="20261001-000000")
+
+    assert summarise_memory(current)["peak_used_kib"] == 9000000
+    assert summarise_memory(older)["peak_used_kib"] == 8000000
