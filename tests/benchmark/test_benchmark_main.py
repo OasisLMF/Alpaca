@@ -64,12 +64,12 @@ def test_main_returns_structured_results_for_every_target(mock_model_main, mock_
     assert sorted(output["results"], key=lambda r: r["version"]) == [
         {
             "label": "PiWind-2.3.3", "model": "PiWind", "test": None, "version": "2.3.3", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "memory": None,
             "source": "live", "is_baseline": False,
         },
         {
             "label": "PiWind-2.4.9", "model": "PiWind", "test": None, "version": "2.4.9", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "memory": None,
             "source": "live", "is_baseline": False,
         },
     ]
@@ -1193,3 +1193,33 @@ def test_main_rejects_publish_test_version_it_cannot_honour_before_running_anyth
     with pytest.raises(OasisAlpacaConfigError, match=message):
         main(config_path)
     mock_model_main.assert_not_called()
+
+
+@mock_aws
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_main_compares_memory_against_a_stored_baseline_and_publishes_the_test_versions(mock_model_main, tmp_path):
+    memory_csv = "timestamp,total_kib,used_kib,swap_used_kib,oom_kills\n1.0,16000000,{},0,0\n"
+    boto3.client("s3", region_name="us-east-1").create_bucket(Bucket="alpaca-benchmark")
+    published = tmp_path / "published"
+    _write_output_files(published, {"summary.csv": "a,b\n1,2\n"})
+    (published / "memory.csv").write_text(memory_csv.format(8000000))
+    upload_baseline("s3://alpaca-benchmark", "PiWind", None, "2.5.7", published, {"AWS_REGION": "us-east-1"})
+
+    def run(run_config):
+        _write_output_files(run_config["RESULT_DIRECTORY"], {"summary.csv": "a,b\n1,2\n"})
+        Path(run_config["RESULT_DIRECTORY"], "memory.csv").write_text(memory_csv.format(9000000))
+    mock_model_main.side_effect = run
+    config_path = _write_config(tmp_path, {
+        "AWS_REGION": "us-east-1", "BENCHMARK_BUCKET": "s3://alpaca-benchmark", "RESULT_DIRECTORY": str(tmp_path / "results"),
+        "OASISLMF_VERSIONS": [], "OASISLMF_BASELINE_VERSION": "2.5.7", "OASISLMF_TEST_VERSION": "2.5.8",
+        "PUBLISH_TEST_VERSION": True,
+    })
+
+    output = main(config_path)
+
+    report_text = output["report_path"].read_text()
+    assert "- PiWind 2.5.7 (baseline, from S3): success (runtime unknown; peak memory 7.6 GiB of 15.3 GiB)" in report_text
+    assert "peak memory 8.6 GiB of 15.3 GiB, +12.5% vs baseline)" in report_text
+    stored = boto3.client("s3", region_name="us-east-1").get_object(
+        Bucket="alpaca-benchmark", Key="PiWind/2.5.8/performance/memory.csv")["Body"].read().decode()
+    assert stored == memory_csv.format(9000000)

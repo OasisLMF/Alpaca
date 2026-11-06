@@ -8,6 +8,7 @@ from alpaca.benchmark.scripts import (
 from alpaca.benchmark.executor import run_benchmark_targets
 from alpaca.benchmark.failure import describe_failure
 from alpaca.benchmark.manifest import manifest_differences, read_manifest
+from alpaca.benchmark.memory import summarise_memory
 from alpaca.benchmark.comparison import build_comparison_reports, resolve_relative_tolerance
 from alpaca.benchmark.releases import resolve_latest_versions
 from alpaca.benchmark.report import build_report_text, run_name, write_report
@@ -122,8 +123,8 @@ def _download_stored_target(config, target):
 
     Returns:
         dict: A result in run_benchmark_targets' shape, with the version marked as an S3
-            baseline and the runtime read from the stored performance metrics (None when the
-            baseline was published without any). A target with a BASELINE_AS_OF 'snapshot' has
+            baseline and the runtime and memory use read from the stored performance metrics
+            (None when the baseline was published without them). A target with a BASELINE_AS_OF 'snapshot' has
             that copy downloaded, and the result records when it was published as
             'baseline_published_at'. A failed download is reported as a failed
             target rather than raised, so the targets that did run are still reported on.
@@ -138,6 +139,7 @@ def _download_stored_target(config, target):
         "runtime_seconds": None,
         "total_runtime_seconds": None,
         "step_timings": {},
+        "memory": None,
     }
     snapshot = target.get("snapshot")
     stamp = {}
@@ -165,6 +167,7 @@ def _download_stored_target(config, target):
         "runtime_seconds": runtime_seconds,
         "total_runtime_seconds": runtime_seconds,
         "step_timings": step_timings,
+        "memory": summarise_memory(result_directory),
     }
 
 

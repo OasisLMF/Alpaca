@@ -1,10 +1,12 @@
 from alpaca.model.commands import (
-    CLEAR_COMPILE_CACHE_COMMAND, DROP_FILE_CACHE_COMMAND, input_checksum_commands, model_run_commands, shared_test_commands
+    CLEAR_COMPILE_CACHE_COMMAND, DROP_FILE_CACHE_COMMAND, input_checksum_commands, memory_sampled,
+    memory_sampler_install_commands, model_run_commands, shared_test_commands
 )
 
 import hashlib
 import json
 import subprocess
+import time
 
 
 def test_model_run_commands_runs_oasislmf():
@@ -126,11 +128,13 @@ def test_shared_test_commands_run_each_test_in_its_own_directory():
 
     assert commands[0] == "mkdir -p alpaca_tests/test_2/runs"
     assert commands[1] == input_checksum_commands("tests/test_2/oasislmf.json", "alpaca_tests/test_2/runs/input_checksums.json")[0]
-    assert commands[2] == CLEAR_COMPILE_CACHE_COMMAND
-    assert commands[3] == DROP_FILE_CACHE_COMMAND
-    assert commands[4] == (
-        'set -o pipefail; cd alpaca_tests/test_2 && oasislmf model run -C "$HOME"/tests/test_2/oasislmf.json'
-        " | tee runs/result.txt"
+    assert commands[2] == memory_sampler_install_commands()[0]
+    assert commands[3] == CLEAR_COMPILE_CACHE_COMMAND
+    assert commands[4] == DROP_FILE_CACHE_COMMAND
+    assert commands[5] == (
+        'set -o pipefail; python3 "$HOME"/.alpaca_memory_sampler.py alpaca_tests/test_2/runs/memory.csv & sampler=$!; '
+        'cd alpaca_tests/test_2 && oasislmf model run -C "$HOME"/tests/test_2/oasislmf.json'
+        " | tee runs/result.txt; status=$?; kill $sampler 2>/dev/null; exit $status"
     )
 
 
@@ -153,3 +157,54 @@ def test_clear_compile_cache_command_removes_numba_cache_files_and_never_fails(t
     assert completed.returncode == 0
     assert sorted(path.name for path in package.iterdir()) == ["kernel.py"]
     assert not (tmp_path / "home" / ".cache" / "numba").exists()
+
+
+def _run_sampled(tmp_path, run_command, memory_csv="runs/memory.csv"):
+    """Install the sampler and run a command under it for real, from the model's base."""
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    (tmp_path / "runs").mkdir()
+    subprocess.run(["bash", "-c", memory_sampler_install_commands()[0]], cwd=tmp_path, env=env, check=True)
+    return subprocess.run(["bash", "-c", "set -o pipefail; " + memory_sampled(run_command, memory_csv)], cwd=tmp_path, env=env)
+
+
+def test_memory_sampled_samples_the_instances_memory_while_the_run_goes_on(tmp_path):
+    completed = _run_sampled(tmp_path, "sleep 1.5 | tee runs/result.txt")
+
+    assert completed.returncode == 0
+    lines = (tmp_path / "runs" / "memory.csv").read_text().splitlines()
+    assert lines[0] == "timestamp,total_kib,used_kib,swap_used_kib,oom_kills"
+    assert len(lines) >= 2
+    timestamp, total, used, swap, _ = lines[1].split(",")
+    assert 0 < int(used) < int(total)
+    assert int(swap) >= 0
+
+
+def test_memory_sampled_exits_with_the_runs_own_status_and_stops_the_sampler(tmp_path):
+    completed = _run_sampled(tmp_path, "(sleep 1.2; exit 3) | tee runs/result.txt")
+
+    assert completed.returncode == 3
+    lines_when_finished = (tmp_path / "runs" / "memory.csv").read_text()
+    time.sleep(1.5)
+    assert (tmp_path / "runs" / "memory.csv").read_text() == lines_when_finished
+
+
+def test_memory_sampled_never_affects_the_run_when_the_sampler_is_missing(tmp_path):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    command = "set -o pipefail; " + memory_sampled("echo ran | tee runs/result.txt", "runs/memory.csv")
+    (tmp_path / "runs").mkdir()
+
+    completed = subprocess.run(["bash", "-c", command], cwd=tmp_path, env=env, capture_output=True, text=True)
+
+    assert completed.returncode == 0
+    assert (tmp_path / "runs" / "result.txt").read_text() == "ran\n"
+
+
+def test_model_run_commands_sample_memory_into_the_runs_directory():
+    commands = model_run_commands("./oasislmf.json")
+
+    install_index = commands.index(memory_sampler_install_commands()[0])
+    run_command = commands[-1]
+    assert install_index < len(commands) - 1
+    assert run_command == "set -o pipefail; " + memory_sampled(
+        "oasislmf model run -C ./oasislmf.json | tee runs/result.txt", "runs/memory.csv"
+    )

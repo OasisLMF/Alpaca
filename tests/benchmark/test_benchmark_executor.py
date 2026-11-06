@@ -45,11 +45,11 @@ def test_run_benchmark_targets_reports_success(mock_model_main, tmp_path):
     assert results == [
         {
             "label": "baseline", "model": "PiWind", "test": None, "version": "2.3.3", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "memory": None,
         },
         {
             "label": "comparison", "model": "PiWind", "test": None, "version": "2.4.9", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {},
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "memory": None,
         },
     ]
 
@@ -390,3 +390,44 @@ def test_a_shared_test_whose_results_cannot_be_downloaded_fails_without_stopping
 
     assert [result["status"] for result in results] == ["failed", "success"]
     assert results[0]["failure"]["stage"] == "downloading results"
+
+
+def _write_memory_file(run_directory, used_kib):
+    run_directory.mkdir(parents=True, exist_ok=True)
+    (run_directory / "memory.csv").write_text(
+        f"timestamp,total_kib,used_kib,swap_used_kib,oom_kills\n1.0,16000000,{used_kib},0,0\n"
+    )
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_run_benchmark_targets_records_each_runs_memory_use(mock_model_main, tmp_path):
+    mock_model_main.side_effect = lambda run_config: _write_memory_file(Path(run_config["RESULT_DIRECTORY"]), 9000000)
+
+    result = run_benchmark_targets([_entry("baseline", tmp_path / "baseline")], "sequential")[0]
+
+    assert result["memory"]["peak_used_kib"] == 9000000
+    assert result["memory"]["total_kib"] == 16000000
+
+
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_run_benchmark_targets_keeps_a_failed_runs_memory_use(mock_model_main, tmp_path):
+    """Running out of memory may be why it failed, so the figures are worth keeping."""
+    def run_out_of_memory(run_config):
+        _write_memory_file(Path(run_config["RESULT_DIRECTORY"]), 15900000)
+        raise OasisAlpacaError("Command failed with exit status 137: oasislmf model run")
+    mock_model_main.side_effect = run_out_of_memory
+
+    result = run_benchmark_targets([_entry("baseline", tmp_path / "baseline")], "sequential")[0]
+
+    assert result["status"] == "failed"
+    assert result["memory"]["peak_used_kib"] == 15900000
+
+
+@mock.patch("alpaca.benchmark.executor.summarise_memory", side_effect=OSError("unreadable"))
+@mock.patch("alpaca.benchmark.executor.model_main")
+def test_a_run_whose_memory_use_cannot_be_read_is_still_reported(mock_model_main, mock_summarise_memory, tmp_path, caplog):
+    result = run_benchmark_targets([_entry("baseline", tmp_path / "baseline")], "sequential")[0]
+
+    assert result["status"] == "success"
+    assert result["memory"] is None
+    assert "Could not read the memory use of benchmark target 'baseline'" in caplog.text

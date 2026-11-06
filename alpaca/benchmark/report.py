@@ -2,6 +2,7 @@ from alpaca.benchmark.timing import (
     MODEL_RUNTIME_STEP, build_timing_table, fastest_result, format_timing_table, green, sort_results_by_speed
 )
 from alpaca.benchmark.comparison import format_comparison_reports
+from alpaca.benchmark.memory import format_memory, memory_warnings
 from alpaca.benchmark.scripts import STORED_SOURCE, group_name
 from pathlib import Path
 
@@ -69,6 +70,31 @@ def _runtime_change(result, baseline):
         return ""
     change = (result_seconds - baseline_seconds) / baseline_seconds * 100
     return f", {change:+.1f}% vs baseline"
+
+
+def _memory_change(result, baseline):
+    """Describe a run's peak memory change from the baseline, e.g. '+2.1% vs baseline', or '' when unknown."""
+    if baseline is None or result is baseline or baseline["status"] != "success" or result["status"] != "success":
+        return ""
+    if not baseline.get("memory") or not result.get("memory"):
+        return ""
+    baseline_peak, result_peak = baseline["memory"]["peak_used_kib"], result["memory"]["peak_used_kib"]
+    change = (result_peak - baseline_peak) / baseline_peak * 100
+    return f", {change:+.1f}% vs baseline"
+
+
+def _memory_summary(result, baseline, any_memory):
+    """Describe a run's memory use for its run summary line, or '' when no run in the report recorded any.
+
+    A run without memory figures is only called out when another run has them, i.e. a stored
+    baseline published before memory was sampled, so a report on runs that predate it reads as
+    it always did.
+    """
+    if result.get("memory"):
+        return f"; {format_memory(result['memory'])}{_memory_change(result, baseline)}"
+    if any_memory and result["status"] == "success":
+        return "; memory not recorded"
+    return ""
 
 
 def _precise_runtime(result):
@@ -144,22 +170,35 @@ def build_report_text(results, comparison_groups, colour=False):
 
     Returns:
         str: The full report text: a run summary line per target (quickest first within its
-            group), then one section per group with its own step-by-step timing table and
-            output comparison (or a note explaining why either was skipped).
+            group) with its runtime and, where it was sampled, its peak memory use (see
+            alpaca.benchmark.memory), then any runs that swapped or had a process killed for
+            running out of memory, then any failed runs, then one section per group with its
+            own step-by-step timing table and output comparison (or a note explaining why
+            either was skipped).
     """
     result_groups = _group_results(results)
     multi_group = len(result_groups) > 1
     comparison_by_group = {group["group"]: group for group in comparison_groups}
 
+    any_memory = any(result.get("memory") for result in results)
     lines = ["Benchmark Report", "=" * len("Benchmark Report"), "", "Runs:"]
     for _, group_results in result_groups:
         fastest = fastest_result(group_results)
         baseline = _baseline(group_results)
         for result in _ordered(group_results):
             runtime = f"{format_runtime(result['runtime_seconds'])}{_runtime_change(result, baseline)}"
-            line = f"- {run_name(result)}: {result['status']} ({runtime})"
+            memory = _memory_summary(result, baseline, any_memory)
+            line = f"- {run_name(result)}: {result['status']} ({runtime}{memory})"
             lines.append(green(line) if colour and result is fastest else line)
     lines.append("")
+
+    warned = [(result, memory_warnings(result.get("memory"))) for result in results]
+    warned = [(result, warnings) for result, warnings in warned if warnings]
+    if warned:
+        lines.append("Memory warnings:")
+        for result, warnings in warned:
+            lines.extend(f"- {run_name(result)}: {warning}" for warning in warnings)
+        lines.append("")
 
     failed = [result for result in results if result["status"] != "success" and result.get("failure")]
     if failed:
