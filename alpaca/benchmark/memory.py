@@ -1,4 +1,6 @@
+from alpaca.benchmark.timing import outside_repeats, repeat_directories
 from pathlib import Path
+from statistics import median
 
 import csv
 
@@ -15,9 +17,12 @@ def find_memory_file(run_directory):
     Returns:
         Path or None: The most recently modified 'memory.csv' found under run_directory, or
             None if none exists (e.g. a run, or a stored baseline, from before memory was
-            sampled).
+            sampled). A later repeat's memory.csv is never picked (see outside_repeats).
     """
-    memory_files = [path for path in Path(run_directory).rglob(MEMORY_FILENAME) if path.is_file()]
+    memory_files = [
+        path for path in Path(run_directory).rglob(MEMORY_FILENAME)
+        if path.is_file() and outside_repeats(path, run_directory)
+    ]
     if not memory_files:
         return None
     return max(memory_files, key=lambda path: path.stat().st_mtime)
@@ -69,6 +74,41 @@ def summarise_memory(run_directory):
         "peak_swap_used_kib": max(swap for _, _, swap, _ in rows),
         "oom_kills": oom_counts[-1] - oom_counts[0] if oom_counts else 0,
         "samples": len(rows),
+    }
+
+
+def summarise_repeat_memory(run_directory):
+    """Summarise the memory a target used across all of its repeats.
+
+    Each repeat is summarised like a single run (see summarise_memory), and the target is then
+    described by the median of their peaks, as its runtime is the median of theirs (see
+    alpaca.benchmark.timing.resolve_repeat_timings). Swap and out-of-memory kills are a warning
+    if any repeat had them, so those take the worst repeat rather than the median. A run that
+    wasn't repeated gives exactly what summarise_memory does.
+
+    Args:
+        run_directory: Local directory a benchmark target's results were downloaded to.
+
+    Returns:
+        dict or None: As summarise_memory, with 'peak_used_kib' the median of the repeats'
+            peaks, 'peak_swap_used_kib' the highest, 'oom_kills' and 'samples' their totals,
+            plus 'repeat_peaks_kib' (each repeat's own peak, in repeat order) when more than
+            one repeat was sampled. None when no repeat has memory samples.
+    """
+    summaries = [summarise_memory(directory) for directory in repeat_directories(run_directory)]
+    summaries = [summary for summary in summaries if summary is not None]
+    if not summaries:
+        return None
+    if len(summaries) == 1:
+        return summaries[0]
+    peaks = [summary["peak_used_kib"] for summary in summaries]
+    return {
+        "peak_used_kib": median(peaks),
+        "total_kib": summaries[0]["total_kib"],
+        "peak_swap_used_kib": max(summary["peak_swap_used_kib"] for summary in summaries),
+        "oom_kills": sum(summary["oom_kills"] for summary in summaries),
+        "samples": sum(summary["samples"] for summary in summaries),
+        "repeat_peaks_kib": peaks,
     }
 
 

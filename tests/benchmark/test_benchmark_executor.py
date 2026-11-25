@@ -45,11 +45,13 @@ def test_run_benchmark_targets_reports_success(mock_model_main, tmp_path):
     assert results == [
         {
             "label": "baseline", "model": "PiWind", "test": None, "version": "2.3.3", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "memory": None,
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "repeat_runtimes": [],
+            "memory": None,
         },
         {
             "label": "comparison", "model": "PiWind", "test": None, "version": "2.4.9", "status": "success",
-            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "memory": None,
+            "runtime_seconds": mock.ANY, "total_runtime_seconds": mock.ANY, "step_timings": {}, "repeat_runtimes": [],
+            "memory": None,
         },
     ]
 
@@ -423,7 +425,7 @@ def test_run_benchmark_targets_keeps_a_failed_runs_memory_use(mock_model_main, t
     assert result["memory"]["peak_used_kib"] == 15900000
 
 
-@mock.patch("alpaca.benchmark.executor.summarise_memory", side_effect=OSError("unreadable"))
+@mock.patch("alpaca.benchmark.executor.summarise_repeat_memory", side_effect=OSError("unreadable"))
 @mock.patch("alpaca.benchmark.executor.model_main")
 def test_a_run_whose_memory_use_cannot_be_read_is_still_reported(mock_model_main, mock_summarise_memory, tmp_path, caplog):
     result = run_benchmark_targets([_entry("baseline", tmp_path / "baseline")], "sequential")[0]

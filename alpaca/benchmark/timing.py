@@ -1,10 +1,48 @@
 from pathlib import Path
+from statistics import median
 from termcolor import colored
 
 import re
 
 COMPLETED_LINE_PATTERN = re.compile(r"COMPLETED:\s*(?P<step>\S+)\s+in\s+(?P<seconds>[\d.]+)s")
 MODEL_RUNTIME_STEP = "oasislmf.manager.interface"
+REPEATS_DIRECTORY = "repeats"
+
+
+def outside_repeats(path, run_directory):
+    """Say whether a path under a run directory belongs to its first run rather than a later repeat.
+
+    With REPEATS, the first run's results are downloaded where a single run's always are, and
+    every later repeat's under 'repeats/<number>/' beside them (see repeat_directories), so
+    anything that reads a run's results has to leave that folder out.
+
+    Args:
+        path: A path found under run_directory.
+        run_directory: Local directory a benchmark target's results were downloaded to.
+
+    Returns:
+        bool: False when path is inside run_directory's 'repeats/' folder.
+    """
+    parts = Path(path).relative_to(run_directory).parts
+    return not parts or parts[0] != REPEATS_DIRECTORY
+
+
+def repeat_directories(run_directory):
+    """List the directories each repeat of a run's results are in, first run first.
+
+    Args:
+        run_directory: Local directory a benchmark target's results were downloaded to.
+
+    Returns:
+        list[Path]: run_directory itself, then 'repeats/2', 'repeats/3', ... in number order,
+            for each one that exists. Just [run_directory] for a run that wasn't repeated.
+    """
+    run_directory = Path(run_directory)
+    repeats = run_directory / REPEATS_DIRECTORY
+    numbered = sorted(
+        (int(path.name), path) for path in repeats.iterdir() if path.is_dir() and path.name.isdigit()
+    ) if repeats.is_dir() else []
+    return [run_directory, *(path for _, path in numbered)]
 
 
 def find_result_file(run_directory):
@@ -16,9 +54,13 @@ def find_result_file(run_directory):
     Returns:
         Path or None: The most recently modified 'result.txt' found under run_directory, or
             None if none exists (e.g. an older Alpaca version's run, or one that failed
-            before 'oasislmf model run' produced any output).
+            before 'oasislmf model run' produced any output). A later repeat's result.txt is
+            never picked (see outside_repeats).
     """
-    result_files = [path for path in Path(run_directory).rglob("result.txt") if path.is_file()]
+    result_files = [
+        path for path in Path(run_directory).rglob("result.txt")
+        if path.is_file() and outside_repeats(path, run_directory)
+    ]
     if not result_files:
         return None
     return max(result_files, key=lambda path: path.stat().st_mtime)
@@ -69,6 +111,37 @@ def resolve_model_runtime(run_directory, fallback_runtime_seconds):
         return fallback_runtime_seconds, step_timings
 
     return step_timings[MODEL_RUNTIME_STEP], step_timings
+
+
+def resolve_repeat_timings(run_directory, fallback_runtime_seconds):
+    """Resolve a target's model runtime and step timings across all of its repeats.
+
+    Each repeat is read like a single run (see resolve_model_runtime), and the target is then
+    described by the median of each: a single unusually slow or fast repeat moves a median far
+    less than it moves an average. A run that wasn't repeated gives exactly what
+    resolve_model_runtime does.
+
+    Args:
+        run_directory: Local directory a benchmark target's results were downloaded to.
+        fallback_runtime_seconds: Wall-clock runtime to fall back to when no repeat reported
+            its model runtime.
+
+    Returns:
+        tuple[float, dict[str, float], list[float]]: (runtime_seconds, step_timings,
+            repeat_runtimes). runtime_seconds and each step's timing are the medians across
+            the repeats that reported them, and repeat_runtimes is each repeat's own model
+            runtime, in repeat order, leaving out any that didn't report one.
+    """
+    repeats = [resolve_model_runtime(directory, None) for directory in repeat_directories(run_directory)]
+    repeat_runtimes = [runtime for runtime, _ in repeats if runtime is not None]
+    steps = sorted({step for _, step_timings in repeats for step in step_timings})
+    step_timings = {
+        step: median(timings[step] for _, timings in repeats if step in timings)
+        for step in steps
+    }
+    if not repeat_runtimes:
+        return fallback_runtime_seconds, step_timings, []
+    return median(repeat_runtimes), step_timings, repeat_runtimes
 
 
 def green(text):
