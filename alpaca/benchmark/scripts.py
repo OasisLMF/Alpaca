@@ -178,7 +178,7 @@ def resolve_execution_mode(config):
     return execution_mode
 
 
-def build_benchmark_plan(config, targets, tests_per_instance="separate"):
+def build_benchmark_plan(config, targets, tests_per_instance="separate", repeats=1):
     """Build a benchmark plan for display from a validated config and its targets.
 
     Args:
@@ -186,6 +186,7 @@ def build_benchmark_plan(config, targets, tests_per_instance="separate"):
         targets: List of targets as returned by build_benchmark_targets.
         tests_per_instance: 'separate' or 'shared' (see TESTS_PER_INSTANCE), which decides how
             many EC2 instances the targets that run live need.
+        repeats: How many times each live target runs on its instance (see REPEATS).
 
     Returns:
         dict: With keys 'instances' (how many EC2 instances the live targets will launch),
@@ -226,7 +227,7 @@ def build_benchmark_plan(config, targets, tests_per_instance="separate"):
     }
     return {
         "models": models, "targets": target_lines, "execution_mode": resolve_execution_mode(config),
-        "instances": len(instance_keys), "tests_per_instance": tests_per_instance,
+        "instances": len(instance_keys), "tests_per_instance": tests_per_instance, "repeats": repeats,
     }
 
 
@@ -372,4 +373,8 @@ def format_benchmark_plan(plan):
         lines.append("EC2 instances:")
         sharing = " (tests share an instance per version)" if plan.get("tests_per_instance") == "shared" else ""
         lines.append(f"{plan['instances']}{sharing}")
+    if plan.get("repeats", 1) > 1:
+        lines.append("")
+        lines.append("Repeats:")
+        lines.append(f"{plan['repeats']} runs of each live target on its instance, reported as medians")
     return "\n".join(lines)

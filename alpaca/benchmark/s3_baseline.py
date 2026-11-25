@@ -5,7 +5,7 @@ from alpaca.benchmark.report import REPORT_FILENAME
 from alpaca.benchmark.scripts import (
     benchmark_locations, benchmark_tests, benchmark_versions, group_name, model_name_from_location
 )
-from alpaca.benchmark.timing import find_result_file
+from alpaca.benchmark.timing import REPEATS_DIRECTORY, find_result_file, repeat_directories
 from alpaca.exceptions import OasisAlpacaConfigError, OasisAlpacaError
 from botocore.exceptions import ClientError
 from datetime import datetime, timedelta, timezone
@@ -402,9 +402,12 @@ def upload_baseline(bucket_uri, model, test, version, result_directory, config, 
     first (see _archive_baseline), so it's kept rather than overwritten. The performance data is
     the run's result.txt and, when there is one, its manifest.json (see
     alpaca.benchmark.manifest), so a later benchmark reusing the baseline can check it ran
-    under the same conditions, and its memory.csv (see alpaca.benchmark.memory). The benchmark's
-    report goes alongside, so a baseline, current or archived, can be read without re-running
-    anything, and a published.json records when and what was published.
+    under the same conditions, and its memory.csv (see alpaca.benchmark.memory). A run with
+    REPEATS also stores each later repeat's result.txt and memory.csv, under
+    'performance/repeats/<number>/', so a benchmark reusing the baseline gets its medians and
+    spread too; only the first run's output is stored. The benchmark's report goes alongside,
+    so a baseline, current or archived, can be read without re-running anything, and a
+    published.json records when and what was published.
 
     Args:
         bucket_uri: S3 bucket URI (e.g. 's3://alpaca-benchmark') to publish under.
@@ -439,6 +442,14 @@ def upload_baseline(bucket_uri, model, test, version, result_directory, config, 
     if result_file is not None:
         client.upload_file(str(result_file), bucket, f"{prefix}/performance/{PERFORMANCE_RESULT_FILENAME}")
         logger.info(f"Published {name} {version} performance metrics to s3://{bucket}/{prefix}/performance")
+    for directory in repeat_directories(result_directory)[1:]:
+        repeat_prefix = f"{prefix}/performance/{REPEATS_DIRECTORY}/{directory.name}"
+        repeat_result_file = find_result_file(directory)
+        if repeat_result_file is not None:
+            client.upload_file(str(repeat_result_file), bucket, f"{repeat_prefix}/{PERFORMANCE_RESULT_FILENAME}")
+        repeat_memory_file = find_memory_file(directory)
+        if repeat_memory_file is not None:
+            client.upload_file(str(repeat_memory_file), bucket, f"{repeat_prefix}/{MEMORY_FILENAME}")
 
     manifest_file = Path(result_directory) / MANIFEST_FILENAME
     if manifest_file.is_file():
@@ -469,7 +480,9 @@ def download_baseline(bucket_uri, model, test, version, local_directory, config,
     (local_directory/output/*, local_directory/result.txt and, when they were published,
     local_directory/manifest.json and local_directory/memory.csv), so find_output_dir,
     find_result_file, resolve_model_runtime, read_manifest and summarise_memory all work on it
-    unmodified. The current baseline is
+    unmodified. A baseline published with REPEATS gets each later repeat's result.txt and
+    memory.csv under local_directory/repeats/<number>/ too, as a repeated run's results are
+    laid out (see alpaca.benchmark.timing.repeat_directories). The current baseline is
     downloaded unless stamp picks one of its history's copies instead (see
     resolve_baseline_snapshots).
 
@@ -528,5 +541,14 @@ def download_baseline(bucket_uri, model, test, version, local_directory, config,
         client.download_file(bucket, f"{prefix}/performance/{MEMORY_FILENAME}", str(local_directory / MEMORY_FILENAME))
     except ClientError:
         logger.info(f"No stored memory use found at s3://{bucket}/{prefix}/performance/ (published before memory was sampled)")
+
+    repeats = f"{prefix}/performance/{REPEATS_DIRECTORY}/"
+    for page in paginator.paginate(Bucket=bucket, Prefix=repeats):
+        for obj in page.get("Contents", []):
+            number, _, filename = obj["Key"][len(repeats):].partition("/")
+            if number.isdigit() and filename in (PERFORMANCE_RESULT_FILENAME, MEMORY_FILENAME):
+                repeat_directory = local_directory / REPEATS_DIRECTORY / number
+                repeat_directory.mkdir(parents=True, exist_ok=True)
+                client.download_file(bucket, obj["Key"], str(repeat_directory / filename))
 
     return local_directory
